@@ -55,16 +55,25 @@ async function secretariaApi(action,p,retry){
  return j;
 }
 function credentialsHtml(){
- var h='<div class="card" style="margin-bottom:12px"><h3>Credenciais dos 42 coordenadores</h3><p class="muted">O ROL e o estado do acesso podem ser consultados. Por segurança, os PINs originais são armazenados apenas como hashes e não podem ser revelados. Para obter um PIN novo, é necessário redefini-lo. Isso invalida o PIN anterior e as sessões do coordenador.</p></div>';
+ var h='<div class="card" style="margin-bottom:12px"><h3>Credenciais dos 42 coordenadores</h3><p class="muted">PINs confirmados podem ser consultados pelo superadmin. Cada consulta é registrada na auditoria.</p></div>';
  if(!S.coordData)return h+'<div class="card" id="coordList">Consultando credenciais…</div>';
  var sectors=S.coordData.sectors||[];
- h+='<div class="card" id="coordList" style="overflow-x:auto"><table class="table"><thead><tr><th>Setor</th><th>Coordenador</th><th>ROL</th><th>Estado</th><th>PIN</th></tr></thead><tbody>';
- h+=sectors.map(function(x){return'<tr><td>'+e(x.setor)+'</td><td>'+e(x.coordenador)+'</td><td><span class="code">'+e(x.rol)+'</span></td><td>'+e(x.credencial_status)+'</td><td><button class="btn ghost small" onclick="rotateCoordinatorPIN('+Number(x.setor)+')">Redefinir PIN</button></td></tr>'}).join("");
+ h+='<div class="card" id="coordList" style="overflow-x:auto"><table class="table"><thead><tr><th>Setor</th><th>Coordenador</th><th>ROL</th><th>Estado</th><th>PIN ATUAL</th><th>Ação</th></tr></thead><tbody>';
+ h+=sectors.map(function(x){return'<tr><td>'+e(x.setor)+'</td><td>'+e(x.coordenador)+'</td><td><span class="code">'+e(x.rol)+'</span></td><td>'+e(x.credencial_status)+'</td><td><button class="btn ghost small" onclick="showCoordinatorPIN('+Number(x.setor)+')">Mostrar PIN</button></td><td><button class="btn ghost small" onclick="rotateCoordinatorPIN('+Number(x.setor)+')">Redefinir PIN</button></td></tr>'}).join("");
  return h+'</tbody></table></div>';
 }
 async function loadCoordinatorAccess(){
  try{S.coordData=await secretariaApi("bootstrap");if(S.tab==="admins")render()}
  catch(x){var node=document.getElementById("coordList");if(node)node.textContent="Não foi possível consultar os coordenadores: "+x.message}
+}
+window.showCoordinatorPIN=async function(n){
+ try{
+  var d=await api("show_coordinator_pin",{setor:n});
+  if(d.status!=="confirmed"){toast("Verificação pendente.");return}
+  window._latestPinInfo={rol:String(d.rol),pin:String(d.pin)};
+  box.innerHTML='<div class="ey">PIN ATUAL</div><h2>Setor '+e(n)+'</h2><div class="card"><div class="ey">ROL '+e(d.rol)+'</div><h2 class="code">'+e(d.pin)+'</h2></div><div class="actions"><button class="btn primary" onclick="copyNewPin()">Copiar ROL e PIN</button><button class="btn ghost" onclick="closeM()">Fechar</button></div>';
+  back.classList.add("show");
+ }catch(x){toast(x.message)}
 }
 window.rotateCoordinatorPIN=async function(n){
  var s=S.coordData&&S.coordData.sectors&&S.coordData.sectors.find(function(x){return Number(x.setor)===Number(n)});
