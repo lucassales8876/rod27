@@ -26,7 +26,25 @@ commits `5a86e10` e `fcb7e64`.
   execução das funções de consulta e atualização dos PINs.
 - Controle, Secretaria e Coordenador responderam HTTP 200 na Cloudflare.
 - Redefinição e troca de coordenador não foram executadas sobre credenciais reais;
-  falta um teste desses fluxos em ambiente isolado.
+  os fluxos foram testados em ambiente local isolado em 12/10/2026.
+
+## Validação isolada de 12/10/2026
+
+- Ambiente Supabase local, com ROLs, nomes, PINs, usuário administrativo e fichas
+  fictícios. O roteiro local `../rod27-isolated/test-flow.mjs` passou após a correção.
+- Redefinição: PIN aleatório de seis dígitos aceito no login; PIN anterior recusado;
+  Vault atualizado; sessão anterior revogada; operação auditada.
+- Troca: ROL e nome novos aparecem no login e na sessão; ROL anterior e sessão
+  anterior recusados; Vault atualizado; operação auditada. Os detalhes de
+  auditoria não contêm PIN.
+- Defeito encontrado: a troca não recalculava a ficha especial quando ela já
+  estava em preenchimento. A migração
+  `20261012230000_recalculate_coordinator_draft.sql` corrige fichas não
+  iniciadas e em preenchimento, preservando fichas já enviadas. A contagem e a
+  visão do novo coordenador passaram no teste repetido.
+- Conferência somente de leitura na produção: 42 credenciais, 42 vínculos no
+  Vault e nenhuma ficha iniciada. Nenhuma redefinição nem troca foi executada
+  na produção.
 
 ## Pendências para liberação oficial
 
@@ -35,6 +53,8 @@ commits `5a86e10` e `fcb7e64`.
 - Há uma conta administrativa ativa; o segundo acesso previsto no painel ainda
   está pendente.
 - O painel indica 42 fichas especiais que ainda precisam de regra definida.
+- A migração corretiva está no código, testada localmente, mas ainda não foi
+  aplicada na produção. A liberação oficial continua pendente.
 
-Próximo objetivo: validar redefinição e troca de coordenador em ambiente isolado,
-sem modificar credenciais reais.
+Próximo objetivo: aplicar a migração corretiva na janela de liberação, depois
+de definir com a Secretaria Geral o tratamento das fichas especiais.
