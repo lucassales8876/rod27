@@ -1,5 +1,8 @@
 # Rod27 — estado do projeto
 
+Atualização em 13/10/2026: migração corretiva aplicada em produção; fluxo de
+fichas especiais preparado e testado, aguardando confirmação administrativa.
+
 Em 12/10/2026, a gestão protegida dos PINs dos coordenadores foi publicada em
 `https://rod27-ieadern.pages.dev/controle`. Branch `main`; implementação nos
 commits `5a86e10` e `fcb7e64`.
@@ -46,6 +49,51 @@ commits `5a86e10` e `fcb7e64`.
   Vault e nenhuma ficha iniciada. Nenhuma redefinição nem troca foi executada
   na produção.
 
+## Migração corretiva em produção — 13/10/2026
+
+- SQL do commit `960ff91` revisado contra a definição atual: a única mudança
+  funcional é incluir `em_preenchimento` no recálculo de futuras trocas.
+  `CREATE OR REPLACE FUNCTION` não executou alterações de dados.
+- Aplicada como `recalculate_coordinator_draft`, versão do banco
+  `20261013172842`. O arquivo de origem continua sendo
+  `20261012230000_recalculate_coordinator_draft.sql`; o horário da versão foi
+  atribuído pelo Supabase na aplicação. Commit sincronizado em `origin/main`.
+- Definição anterior guardada para reversão em
+  `docs/recovery/20261013-recalculate-coordinator-rollback.sql` na PR de preparação;
+  cópia local em `../rod27-recovery`. Não foi necessário copiar dados pessoais
+  para recuperar uma substituição de função que não modifica registros.
+- Impressões digitais antes/depois idênticas para credenciais, vínculos do Vault,
+  coordenadores, fichas, respostas e perguntas. Conferência final: 42 credenciais,
+  42 PINs do Vault válidos contra seus hashes, 253 fichas, 42 especiais, zero
+  respostas e seis perguntas em rascunho. Nenhum PIN ou coordenador real alterado.
+- Permissões preservadas: função restrita a `service_role`; `anon` e
+  `authenticated` não podem executá-la. Secretaria e Controle responderam HTTP 200.
+
+## Fichas especiais — preparação
+
+- Branch `feat/special-evaluations-preparation`, código no commit `a5d3e9a`.
+  [PR #1, em rascunho](https://github.com/lucassales8876/rod27/pull/1).
+- Designação por ROL, nome do fichário, função e referência de autorização;
+  estados, autoria, impressão, original privado, transcrição manual, conferência
+  e histórico. A nova tabela referencia a ficha existente, sem duplicação.
+- Regra bloqueada por padrão no servidor. Migração aditiva, função `rod27-special`
+  e interface ainda não implantadas na produção. Nenhum avaliador real designado.
+- Proposta e decisões: `docs/FICHAS_ESPECIAIS.md` na branch de preparação.
+  Acesso digital usa outra identidade já existente; avaliador sem acesso digital
+  utiliza papel. Rascunhos de origem anterior exigem revisão, sem sobrescrita;
+  envios históricos permanecem intactos.
+- `tests/isolated/pin-flow.mjs` e `special-flow.mjs` aprovados no Supabase local:
+  PIN/Vault/sessões; autoavaliação e acesso indevido; avaliador digital; papel/PDF
+  privado e íntegro; auditoria; trocas não iniciadas/em preenchimento; reclassificação
+  e inativação de designações antigas; preservação de respostas e envios.
+- Interface de impressão, transcrição, conclusão, autoria e consulta do original
+  conferida com dados fictícios. Seletor de upload da automação indisponível;
+  upload validado pelo endpoint local real, sem mocks.
+- Função nova passou no `deno check`, inclusive Deno 2.1.4; JavaScript das páginas
+  e revisão de whitespace aprovados. A função administrativa herdada mantém
+  17 erros de nulabilidade também presentes em `960ff91`; registrados fora do
+  escopo, sem impedir os testes de execução. Não foram corrigidos nesta missão.
+
 ## Pendências para liberação oficial
 
 - As seis perguntas seguem em rascunho e dependem de autorização da Secretaria
@@ -53,8 +101,14 @@ commits `5a86e10` e `fcb7e64`.
 - Há uma conta administrativa ativa; o segundo acesso previsto no painel ainda
   está pendente.
 - O painel indica 42 fichas especiais que ainda precisam de regra definida.
-- A migração corretiva está no código, testada localmente, mas ainda não foi
-  aplicada na produção. A liberação oficial continua pendente.
+- Bloqueios da liberação oficial: confirmação do procedimento pelo pastor Rubem,
+  implantação/ativação posterior do fluxo especial e publicação especificamente
+  autorizada do formulário e das seis perguntas. A migração corretiva está concluída.
+- O segundo acesso administrativo continua previsto; não foi identificado como
+  bloqueio técnico dos fluxos já testados.
+- Aviso de segurança preexistente: [proteção contra senhas vazadas desativada no
+  Auth](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
+  Não houve alteração dessa configuração fora do escopo.
 
-Próximo objetivo: aplicar a migração corretiva na janela de liberação, depois
-de definir com a Secretaria Geral o tratamento das fichas especiais.
+Próximo objetivo: obter a confirmação do pastor Rubem para o procedimento
+documentado na PR #1, antes de ativar o fluxo especial em produção.
