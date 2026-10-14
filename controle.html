@@ -28,9 +28,63 @@ function render(){var d=S.data;app.innerHTML='<section class="hero"><div class="
 function view(){var d=S.data;if(S.tab==="overview")return overview(d);if(S.tab==="questions")return questions(d);if(S.tab==="settings")return settings(d);if(S.tab==="admins")return admins(d);return audit(d)}
 function overview(d){var h=d.health,g=(d.readiness&&d.readiness.checks)||[];
 var pre='<div class="card" style="margin-bottom:12px"><h3>Preparação do Rodízio 2027</h3><p class="muted">Verificações automáticas do sistema; não liberam acessos nem publicam formulários.</p>'+g.map(function(x){return'<div class="row" style="display:flex;gap:12px;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e3ddd2"><div><b>'+e(x.title)+'</b><div class="muted">'+e(x.detail)+'</div></div><span class="pill '+(x.ok?"ok":"warn")+'">'+(x.ok?"Pronto":"Pendente")+'</span></div>'}).join("")+'</div>';return pre+'<div class="grid"><div class="card kpi"><strong>'+e(h.database_size)+'</strong><span>Banco de dados</span></div><div class="card kpi"><strong>'+h.setores+'</strong><span>Setores</span></div><div class="card kpi"><strong>'+h.avaliacoes+'</strong><span>Avaliações</span></div><div class="card kpi"><strong>'+h.credenciais_ativas+'</strong><span>Coordenadores ativos</span></div><div class="card kpi"><strong>'+h.sessoes_ativas+'</strong><span>Sessões ativas</span></div><div class="card kpi"><strong>'+h.admins+'</strong><span>Contas administrativas</span></div></div><div class="card" style="margin-top:12px"><h3>Estado operacional</h3><p>Edge do coordenador: <span class="pill ok">publicada</span> · Painel Secretaria: <span class="pill ok">publicado</span></p><p class="muted">O diagnóstico desta tela é gerado diretamente do banco institucional Rod27.</p><div class="actions"><button class="btn danger" onclick="revokeAll()">Encerrar todas as sessões de coordenadores</button></div></div>'}
-function questions(d){return'<div class="card"><h3>Formulário do coordenador</h3><p class="muted">As perguntas ainda estão em rascunho e podem ser lapidadas antes da publicação.</p></div>'+d.questions.map(function(q){return'<div class="question"><span class="pill '+(q.status==="rascunho"?"warn":"ok")+'">'+e(q.status)+'</span><h4>'+q.ordem+'. '+e(q.titulo)+'</h4><p>'+e(q.enunciado)+'</p><button class="btn ghost small" onclick="editQ(&quot;'+q.id+'&quot;)">Editar</button></div>'}).join("")}
-window.editQ=function(id){var q=S.data.questions.find(function(x){return x.id===id});box.innerHTML='<div class="ey">PERGUNTA '+q.ordem+'</div><h2>'+e(q.codigo)+'</h2><div class="field"><label>Título</label><input id="qt" value="'+e(q.titulo)+'"></div><div class="field"><label>Enunciado</label><textarea id="qe" rows="7">'+e(q.enunciado)+'</textarea></div><div class="actions"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn primary" onclick="saveQ(&quot;'+id+'&quot;)">Salvar</button></div>';back.classList.add("show")};
-window.saveQ=async function(id){try{await api("update_question",{id:id,titulo:document.getElementById("qt").value,enunciado:document.getElementById("qe").value});closeM();toast("Pergunta atualizada.");await boot(true)}catch(x){toast(x.message)}}
+function questions(d){
+ var all=d.questions||[],active=all.filter(function(q){return q.ativa&&q.status!=="arquivada"}).sort(function(a,b){return a.ordem-b.ordem}),archived=all.filter(function(q){return !q.ativa||q.status==="arquivada"});
+ var h='<div class="card"><div class="top"><div><h3>Editor do formulário dos coordenadores</h3><p class="muted">Edite enunciado, título, tipo de resposta, alternativas e obrigatoriedade. Alterações salvas em rascunho são registradas na auditoria. Nenhuma pergunta será publicada automaticamente.</p><p><span class="pill warn">'+active.filter(q=>q.status==="rascunho").length+' em rascunho</span> · '+active.length+' perguntas ativas</p></div><button class="btn primary small" onclick="newQ()">+ Nova pergunta</button></div></div>';
+ h+=active.map(function(q){
+  var kind=q.tipo_resposta==="escolha_unica"?"Múltipla escolha":"Resposta discursiva";
+  var opts=q.tipo_resposta==="escolha_unica"?'<div class="muted" style="margin-top:8px">Alternativas: '+e((q.opcoes||[]).join(" · "))+'</div>':"";
+  return'<div class="question"><div class="top"><div><span class="pill '+(q.status==="rascunho"?"warn":"ok")+'">'+e(q.status)+'</span> <span class="pill">'+e(kind)+'</span> '+(q.obrigatoria?'<span class="pill">Obrigatória</span>':'<span class="pill">Opcional</span>')+'</div><span class="muted">Código '+e(q.codigo)+'</span></div><h4 style="margin-top:9px">'+e(q.ordem)+'. '+e(q.titulo)+'</h4><p style="white-space:pre-wrap">'+e(q.enunciado)+'</p>'+opts+'<div class="actions"><button class="btn ghost small" onclick="editQ(&quot;'+e(q.id)+'&quot;)">Editar pergunta</button>'+(q.status==="rascunho"?'<button class="btn danger small" onclick="archiveQ(&quot;'+e(q.id)+'&quot;)">Arquivar</button>':'')+'</div></div>'
+ }).join("");
+ if(archived.length)h+='<details class="card" style="margin-top:12px"><summary>Arquivo de perguntas ('+archived.length+')</summary>'+archived.map(function(q){return'<p>'+e(q.codigo)+' · '+e(q.titulo)+' · '+e(q.status)+'</p>'}).join("")+'</details>';
+ return h;
+}
+function editorMarkup(q,isNew){
+ var kind=q?.tipo_resposta||"texto_longo",isChoice=kind==="escolha_unica",choices=Array.isArray(q?.opcoes)?q.opcoes.join("\n"):"";
+ var h='<div class="ey">FORMULÁRIO DO COORDENADOR</div><h2>'+(isNew?"Nova pergunta":"Editar pergunta "+e(q.ordem))+'</h2><p class="muted">'+(isNew?"Crie uma pergunta em rascunho. A publicação é separada.":q.status==="rascunho"?"As alterações ficam salvas em rascunho.":"Esta pergunta já foi publicada e não pode ser alterada diretamente. É necessária uma nova versão para preservar o histórico.")+'</p>';
+ if(!isNew&&q.status!=="rascunho")return h+'<button class="btn ghost" onclick="closeM()">Fechar</button>';
+ h+='<div class="field"><label>Título da pergunta</label><input id="qt" maxlength="180" value="'+e(q?.titulo||"")+'" placeholder="Ex.: Relacionamento com a congregação"></div>';
+ h+='<div class="field"><label>Pergunta exibida ao coordenador</label><textarea id="qe" rows="6" maxlength="4000" placeholder="Escreva aqui exatamente o que o coordenador deverá responder.">'+e(q?.enunciado||"")+'</textarea></div>';
+ h+='<div class="field"><label>Tipo de resposta</label><select id="qtype" onchange="toggleQChoices()"><option value="texto_longo" '+(kind==="texto_longo"?"selected":"")+'>Resposta discursiva (texto livre)</option><option value="escolha_unica" '+(isChoice?"selected":"")+'>Múltipla escolha (uma alternativa)</option></select></div>';
+ h+='<div class="field" id="qchoiceswrap" style="'+(isChoice?"":"display:none")+'"><label>Alternativas, uma por linha</label><textarea id="qchoices" rows="6" placeholder="Opção 1&#10;Opção 2&#10;Opção 3">'+e(choices)+'</textarea><p class="muted">Informe de 2 a 12 alternativas distintas.</p></div>';
+ h+='<div class="field"><label style="display:flex;gap:8px;align-items:center"><input id="qrequired" type="checkbox" style="width:auto" '+(q?.obrigatoria!==false?"checked":"")+'> Resposta obrigatória</label></div>';
+ h+='<div class="actions"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn primary" onclick="'+(isNew?"createQ()":"saveQ(&quot;"+e(q.id)+"&quot;)")+'">'+(isNew?"Criar rascunho":"Salvar alterações")+'</button></div>';
+ return h;
+}
+window.toggleQChoices=function(){
+ var el=document.getElementById("qchoiceswrap"),sel=document.getElementById("qtype");
+ if(el&&sel)el.style.display=sel.value==="escolha_unica"?"":"none";
+};
+window.editQ=function(id){
+ var q=S.data.questions.find(function(x){return x.id===id});
+ if(!q){toast("Pergunta não encontrada.");return}
+ box.innerHTML=editorMarkup(q,false);back.classList.add("show");
+};
+window.newQ=function(){box.innerHTML=editorMarkup(null,true);back.classList.add("show")};
+function questionPayload(){
+ var title=document.getElementById("qt").value.trim(),text=document.getElementById("qe").value.trim(),type=document.getElementById("qtype").value,required=document.getElementById("qrequired").checked;
+ if(!title||!text)throw new Error("Preencha o título e a pergunta.");
+ var options=null;
+ if(type==="escolha_unica"){
+  options=document.getElementById("qchoices").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  if(options.length<2||options.length>12||new Set(options.map(v=>v.toLowerCase())).size!==options.length)throw new Error("Informe de 2 a 12 alternativas diferentes.");
+ }
+ return{titulo:title,enunciado:text,tipo_resposta:type,opcoes:options,obrigatoria:required};
+}
+window.saveQ=async function(id){
+ try{var d=questionPayload();await api("update_question",Object.assign({id:id},d));closeM();toast("Pergunta salva no rascunho.");await boot(true)}
+ catch(x){toast(x.message)}
+};
+window.createQ=async function(){
+ try{var d=questionPayload();await api("create_question",d);closeM();toast("Nova pergunta adicionada em rascunho.");await boot(true)}
+ catch(x){toast(x.message)}
+};
+window.archiveQ=async function(id){
+ var q=S.data.questions.find(x=>x.id===id);if(!q||q.status!=="rascunho"){toast("Somente perguntas em rascunho podem ser arquivadas.");return}
+ if(!confirm('Arquivar a pergunta "'+q.titulo+'"? Ela deixará de aparecer no formulário, mas permanecerá no histórico.'))return;
+ try{await api("archive_question",{id:id});toast("Pergunta arquivada.");await boot(true)}
+ catch(x){toast(x.message)}
+};
 function settings(d){
  var labels={
  "coordenador.login.bloqueio_minutos":["Bloqueio após falhas de senha","O coordenador fica temporariamente impedido de entrar quando erra a senha várias vezes. Não é um limite de inatividade."],

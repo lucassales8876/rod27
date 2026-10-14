@@ -8,7 +8,7 @@ const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"co
 function json(data:unknown,status=200){return new Response(JSON.stringify(data),{status,headers:{...cors,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}})}function fail(message:string,status=400){return json({ok:false,error:message},status)}
 async function ctx(req:Request){const h=req.headers.get("authorization")??"";if(!h.startsWith("Bearer "))return null;const{data,error}=await db.auth.getUser(h.slice(7).trim());if(error||!data.user)return null;const{data:a}=await db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo").eq("user_id",data.user.id).eq("ativo",true).maybeSingle();return a?.papel==="superadmin"?{user:data.user,admin:a}:null}
 async function audit(c:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:c.user.id,papel:c.admin.papel,acao,entidade,entidade_id:id,detalhes})}
-async function bootstrap(c:any){const[{data:health,error:hErr},{data:questions},{data:settings},{data:admins},{data:logs}]=await Promise.all([db.rpc("rod27_system_health"),db.from("perguntas_avaliacao").select("id,codigo,ordem,categoria,titulo,enunciado,tipo_resposta,opcoes,status,ativa").order("ordem"),db.from("configuracoes_sistema_runtime").select("chave,valor,descricao,atualizado_em").order("chave"),db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo,criado_em").order("criado_em"),db.from("auditoria_sistema").select("id,papel,acao,entidade,entidade_id,detalhes,criado_em").order("criado_em",{ascending:false}).limit(60)]);if(hErr)throw hErr;
+async function bootstrap(c:any){const[{data:health,error:hErr},{data:questions},{data:settings},{data:admins},{data:logs}]=await Promise.all([db.rpc("rod27_system_health"),db.from("perguntas_avaliacao").select("id,codigo,ordem,categoria,titulo,enunciado,tipo_resposta,opcoes,obrigatoria,versao,status,ativa").order("ordem"),db.from("configuracoes_sistema_runtime").select("chave,valor,descricao,atualizado_em").order("chave"),db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo,criado_em").order("criado_em"),db.from("auditoria_sistema").select("id,papel,acao,entidade,entidade_id,detalhes,criado_em").order("criado_em",{ascending:false}).limit(60)]);if(hErr)throw hErr;
 const [pagesQ,ownQ,invitesQ]=await Promise.all([
   db.from("paginas_coordenador").select("id",{head:true,count:"exact"}).eq("ativa",true),
   db.from("avaliacoes_dirigente").select("id",{head:true,count:"exact"}).eq("eh_proprio_coordenador",true),
@@ -26,7 +26,62 @@ const checks=[
 ];
 const readiness={checks,ready_for_launch:checks.every((x:any)=>x.ok),checked_at:new Date().toISOString()};
 const users:any[]=[];for(const a of admins??[]){const{data:u}=await db.auth.admin.getUserById(a.user_id);users.push({...a,email:u.user?.email??null})}return{ok:true,admin:{email:c.user.email,nome_exibicao:c.admin.nome_exibicao,papel:c.admin.papel},health,readiness,questions:questions??[],settings:settings??[],admins:users,audit:logs??[]}}
-async function updateQuestion(c:any,b:any){const id=String(b.id??""),titulo=String(b.titulo??"").trim(),enunciado=String(b.enunciado??"").trim();if(!titulo||!enunciado)throw new Error("Título e enunciado são obrigatórios.");const{data:q}=await db.from("perguntas_avaliacao").select("id,status").eq("id",id).maybeSingle();if(!q)throw new Error("Pergunta não encontrada.");if(q.status!=="rascunho")throw new Error("Perguntas publicadas devem ser versionadas antes de alteração.");const{error}=await db.from("perguntas_avaliacao").update({titulo,enunciado,atualizado_em:new Date().toISOString()}).eq("id",id);if(error)throw error;await audit(c,"update_question","perguntas_avaliacao",id,{titulo});return{ok:true}}
+function validateQuestionInput(b:any,previous:any=null){
+ const titulo=String(b.titulo??previous?.titulo??"").trim();
+ const enunciado=String(b.enunciado??previous?.enunciado??"").trim();
+ if(!titulo||!enunciado||titulo.length>180||enunciado.length>4000)throw new Error("Título e pergunta são obrigatórios (até 180 e 4.000 caracteres).");
+ const tipo_resposta=String(b.tipo_resposta??previous?.tipo_resposta??"texto_longo");
+ if(!["texto_longo","escolha_unica"].includes(tipo_resposta))throw new Error("Tipo de resposta não suportado.");
+ const obrigatoria=b.obrigatoria===undefined?(previous?.obrigatoria??true):b.obrigatoria;
+ if(typeof obrigatoria!=="boolean")throw new Error("A obrigatoriedade precisa ser verdadeira ou falsa.");
+ let opcoes:string[]|null=null;
+ if(tipo_resposta==="escolha_unica"){
+  const raw=b.opcoes===undefined?previous?.opcoes:b.opcoes;
+  if(!Array.isArray(raw))throw new Error("Informe as alternativas da pergunta.");
+  opcoes=raw.map((v:any)=>String(v).trim());
+  if(opcoes.length<2||opcoes.length>12||opcoes.some(v=>!v||v.length>120)||new Set(opcoes.map(v=>v.toLowerCase())).size!==opcoes.length)throw new Error("Informe de 2 a 12 alternativas distintas, com até 120 caracteres cada.");
+ }
+ return{titulo,enunciado,tipo_resposta,opcoes,obrigatoria};
+}
+async function updateQuestion(c:any,b:any){
+ const id=String(b.id??"");
+ const{data:q,error:readErr}=await db.from("perguntas_avaliacao").select("id,ciclo_id,status,ativa,versao,titulo,enunciado,tipo_resposta,opcoes,obrigatoria").eq("id",id).maybeSingle();
+ if(readErr)throw readErr;
+ if(!q)throw new Error("Pergunta não encontrada.");
+ if(q.status!=="rascunho"||!q.ativa)throw new Error("Esta pergunta não está em rascunho ativo. Perguntas publicadas exigem nova versão para preservar respostas.");
+ const payload=validateQuestionInput(b,q);
+ const{error}=await db.from("perguntas_avaliacao").update({...payload,atualizado_em:new Date().toISOString()}).eq("id",id).eq("status","rascunho").eq("ativa",true);
+ if(error)throw error;
+ await audit(c,"update_question","perguntas_avaliacao",id,{codigo:q.codigo??null,versao:q.versao,antes:{titulo:q.titulo,enunciado:q.enunciado,tipo_resposta:q.tipo_resposta,opcoes:q.opcoes,obrigatoria:q.obrigatoria},depois:payload});
+ return{ok:true};
+}
+async function createQuestion(c:any,b:any){
+ const payload=validateQuestionInput(b);
+ const{data:cycle,error:cycleErr}=await db.from("ciclos_rodizio").select("id").eq("ano",2027).single();
+ if(cycleErr||!cycle)throw cycleErr??new Error("Ciclo 2027 não encontrado.");
+ const{data:highest,error:ordErr}=await db.from("perguntas_avaliacao").select("ordem").eq("ciclo_id",cycle.id).order("ordem",{ascending:false}).limit(1);
+ if(ordErr)throw ordErr;
+ const ordem=(highest?.[0]?.ordem??0)+1;
+ if(ordem>100)throw new Error("Limite de perguntas atingido.");
+ const codigo="AD"+crypto.randomUUID().replaceAll("-","").slice(0,10).toUpperCase();
+ const{data:row,error}=await db.from("perguntas_avaliacao").insert({ciclo_id:cycle.id,codigo,versao:1,ordem,categoria:"geral",...payload,ativa:true,status:"rascunho"}).select("id").single();
+ if(error||!row)throw error??new Error("Falha ao criar pergunta.");
+ await audit(c,"create_question","perguntas_avaliacao",row.id,{codigo,ordem,...payload});
+ return{ok:true,id:row.id};
+}
+async function archiveQuestion(c:any,b:any){
+ const id=String(b.id??"");
+ const{data:q,error:readErr}=await db.from("perguntas_avaliacao").select("id,codigo,titulo,status,ativa").eq("id",id).maybeSingle();
+ if(readErr||!q)throw readErr??new Error("Pergunta não encontrada.");
+ if(q.status!=="rascunho"||!q.ativa)throw new Error("Somente perguntas ativas em rascunho podem ser arquivadas.");
+ const{count,error:refErr}=await db.from("respostas_avaliacao").select("id",{head:true,count:"exact"}).eq("pergunta_id",id);
+ if(refErr)throw refErr;
+ if(count)throw new Error("A pergunta possui respostas e não pode ser arquivada.");
+ const{error}=await db.from("perguntas_avaliacao").update({status:"arquivada",ativa:false,atualizado_em:new Date().toISOString()}).eq("id",id).eq("status","rascunho");
+ if(error)throw error;
+ await audit(c,"archive_question","perguntas_avaliacao",id,{codigo:q.codigo,titulo:q.titulo});
+ return{ok:true};
+}
 async function updateSetting(c:any,b:any){const key=String(b.chave??""),allowed=["coordenador.login.max_falhas","coordenador.login.bloqueio_minutos","coordenador.sessao.horas","coordenador.senha.formato"];if(!allowed.includes(key))throw new Error("Configuração não editável.");let value:any=String(b.valor??"").trim();if(key!=="coordenador.senha.formato"){const n=Number(value);if(!Number.isFinite(n)||n<=0||n>1440)throw new Error("Valor numérico inválido.");value=n}else if(value!=="pin_6_digitos")throw new Error("Formato ainda não suportado.");const{error}=await db.from("configuracoes_sistema_runtime").update({valor:value,atualizado_por:c.user.id,atualizado_em:new Date().toISOString()}).eq("chave",key);if(error)throw error;await audit(c,"update_setting","configuracoes_sistema_runtime",key,{valor:value});return{ok:true}}
 async function createAdmin(c:any,b:any){const email=String(b.email??"").trim().toLowerCase(),password=String(b.password??""),nome=String(b.nome??"").trim(),papel=String(b.papel??"");if(!email||password.length<10||!["superadmin","secretario_geral","revisor"].includes(papel))throw new Error("Dados inválidos. Use senha com pelo menos 10 caracteres.");const{data,error}=await db.auth.admin.createUser({email,password,email_confirm:true});if(error||!data.user)throw error??new Error("Falha ao criar usuário.");const{error:iErr}=await db.from("usuarios_admin").insert({user_id:data.user.id,papel,nome_exibicao:nome||null,ativo:true});if(iErr){await db.auth.admin.deleteUser(data.user.id);throw iErr}await audit(c,"create_admin","usuarios_admin",data.user.id,{email,papel,nome});return{ok:true,user_id:data.user.id}}
 async function revokeAll(c:any){const now=new Date().toISOString();const{error}=await db.from("coordenador_sessoes").update({revogada_em:now}).is("revogada_em",null);if(error)throw error;await audit(c,"revoke_all_coordinator_sessions","coordenador_sessoes","all",{});return{ok:true}}
@@ -45,5 +100,5 @@ async function showCoordinatorPin(c:any,b:any){
  if(error)throw error;
  return data?.[0]?{ok:true,status:"confirmed",rol:data[0].rol,pin:data[0].pin}:{ok:true,status:"pending"};
 }
-async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
+async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});
