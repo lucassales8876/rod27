@@ -113,3 +113,6 @@ commits `5a86e10` e `fcb7e64`.
 Próximo objetivo: obter a confirmação do pastor Rubem para o procedimento
 documentado na PR #1, antes de ativar o fluxo especial em produção.
 \n## 2026-10-14 — Editor administrativo de perguntas\n- Controle Superior /controle > Formulário: editar título, enunciado, formato discursivo/múltipla escolha, alternativas e obrigatoriedade; criar e arquivar perguntas em rascunho.\n- API rod27-control v4 implementa validação em servidor, ações update_question, create_question, archive_question e auditoria.\n- Cloudflare Pages publicada, HTTP 200; requisição não autenticada ao backend recusada com 403. Teste autenticado completo ainda depende de sessão válida.\n- Seis perguntas originais mantidas em rascunho, sem alterações de conteúdo nem publicação automática.\n- Pastor Rubem autorizou a regra de designação de outro avaliador para as 42 fichas especiais. Implantação da PR especial precisa de revisão e deploy separados.\n
+## 2026-10-14 — Publicação controlada do formulário
+- rod27-coordinator v5: perguntas somente com status publicada e config publicada; confirm_notice, save_answer e submit recusam formulário em rascunho.
+- Preserva as 42 credenciais, os PINs no Vault e as 253 avaliações. Não publica perguntas automaticamente.
