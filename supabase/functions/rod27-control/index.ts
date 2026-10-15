@@ -15,6 +15,9 @@ const [pagesQ,ownQ,invitesQ]=await Promise.all([
   db.from("admin_convites").select("id",{head:true,count:"exact"}).is("usado_em",null).gt("expira_em",new Date().toISOString())
 ]);
 if(pagesQ.error||ownQ.error||invitesQ.error)throw new Error("Falha ao consultar verificações de prontidão.");
+const{data:selfOption,error:selfOptionError}=await db.from("configuracoes_sistema_runtime").select("valor").eq("chave","avaliacao.autoavaliacao.permitida").maybeSingle();
+if(selfOptionError)throw selfOptionError;
+const selfAllowed=selfOption?.valor?.permitida===true;
 const validInvites=invitesQ.count??0,ownCount=ownQ.count??0,activePages=pagesQ.count??0,published=(questions??[]).filter((x:any)=>x.ativa && x.status==="publicada").length;
 const checks=[
   {id:"base",title:"Base de setores e congregações",ok:Number(health.setores)===42&&Number(health.congregacoes)===253,detail:`${health.setores} setores e ${health.congregacoes} congregações cadastradas`},
@@ -22,7 +25,7 @@ const checks=[
   {id:"questions",title:"Publicação do formulário",ok:published>0,detail:`${published} perguntas publicadas; ${(questions??[]).filter((x:any)=>x.status==="rascunho").length} em rascunho`},
   {id:"administrators",title:"Primeiro acesso administrativo",ok:Number(health.admins)>=2,detail:`${health.admins} contas ativas; ${validInvites} convites válidos ainda não utilizados`},
   {id:"coordinator_access",title:"Liberação de credenciais",ok:Number(health.credenciais_ativas)===42,detail:`${health.credenciais_ativas} de 42 coordenadores com acesso liberado`},
-  {id:"own_coordinator",title:"Avaliação dos próprios coordenadores",ok:ownCount===0,detail:ownCount?`${ownCount} fichas especiais ainda precisam de regra definida`:"Nenhuma ficha especial pendente"}
+  {id:"own_coordinator",title:"Avaliação dos próprios coordenadores",ok:ownCount===0||selfAllowed,detail:selfAllowed?`${ownCount} autoavaliações autorizadas e habilitadas (regra reversível)`:ownCount?`${ownCount} fichas exigem decisão administrativa`:"Nenhuma ficha especial pendente"}
 ];
 const readiness={checks,ready_for_launch:checks.every((x:any)=>x.ok),checked_at:new Date().toISOString()};
 const users:any[]=[];for(const a of admins??[]){const{data:u}=await db.auth.admin.getUserById(a.user_id);users.push({...a,email:u.user?.email??null})}return{ok:true,admin:{email:c.user.email,nome_exibicao:c.admin.nome_exibicao,papel:c.admin.papel},health,readiness,questions:questions??[],settings:settings??[],admins:users,audit:logs??[]}}
@@ -43,16 +46,28 @@ function validateQuestionInput(b:any,previous:any=null){
  }
  return{titulo,enunciado,tipo_resposta,opcoes,obrigatoria};
 }
+async function ensureCycleWithoutAnswers(cycleId:string) {
+ const{count:started,error:startedError}=await db.from("avaliacoes_dirigente")
+   .select("id",{head:true,count:"exact"}).eq("ciclo_id",cycleId).neq("status","nao_iniciada");
+ if(startedError)throw startedError;
+ // Any started evaluation in this cycle prohibits structural changes.
+ if(started)throw new Error("Há avaliações iniciadas. Não é permitido alterar ou publicar novas perguntas sem versionamento.");
+ // Verify existing answers directly through a database-side protected RPC.
+ const{data:lockStatus,error:statusError}=await db.rpc("rod27_cycle_has_answers",{p_ciclo:cycleId});
+ if(statusError)throw statusError;
+ if(lockStatus)throw new Error("Existem respostas salvas. A alteração requer uma nova versão do formulário.");
+}
 async function updateQuestion(c:any,b:any){
  const id=String(b.id??"");
  const{data:q,error:readErr}=await db.from("perguntas_avaliacao").select("id,ciclo_id,status,ativa,versao,titulo,enunciado,tipo_resposta,opcoes,obrigatoria").eq("id",id).maybeSingle();
  if(readErr)throw readErr;
  if(!q)throw new Error("Pergunta não encontrada.");
- if(q.status!=="rascunho"||!q.ativa)throw new Error("Esta pergunta não está em rascunho ativo. Perguntas publicadas exigem nova versão para preservar respostas.");
+ if(!q.ativa||!["rascunho","publicada"].includes(q.status))throw new Error("Pergunta arquivada não pode ser alterada.");
+ if(q.status==="publicada")await ensureCycleWithoutAnswers(q.ciclo_id);
  const payload=validateQuestionInput(b,q);
- const{error}=await db.from("perguntas_avaliacao").update({...payload,atualizado_em:new Date().toISOString()}).eq("id",id).eq("status","rascunho").eq("ativa",true);
+ const{error}=await db.from("perguntas_avaliacao").update({...payload,atualizado_em:new Date().toISOString()}) .eq("id",id).eq("status",q.status).eq("ativa",true);
  if(error)throw error;
- await audit(c,"update_question","perguntas_avaliacao",id,{codigo:q.codigo??null,versao:q.versao,antes:{titulo:q.titulo,enunciado:q.enunciado,tipo_resposta:q.tipo_resposta,opcoes:q.opcoes,obrigatoria:q.obrigatoria},depois:payload});
+ await audit(c,q.status==="publicada"?"update_published_question_before_first_answer":"update_question","perguntas_avaliacao",id,{codigo:q.codigo??null,versao:q.versao,antes:{titulo:q.titulo,enunciado:q.enunciado,tipo_resposta:q.tipo_resposta,opcoes:q.opcoes,obrigatoria:q.obrigatoria},depois:payload});
  return{ok:true};
 }
 async function createQuestion(c:any,b:any){
@@ -68,6 +83,34 @@ async function createQuestion(c:any,b:any){
  if(error||!row)throw error??new Error("Falha ao criar pergunta.");
  await audit(c,"create_question","perguntas_avaliacao",row.id,{codigo,ordem,...payload});
  return{ok:true,id:row.id};
+}
+async function publishQuestion(c:any,b:any){
+ const id=String(b.id??"");
+ const{data:q,error:err}=await db.from("perguntas_avaliacao")
+  .select("id,ciclo_id,codigo,status,ativa,titulo,tipo_resposta,opcoes")
+  .eq("id",id).maybeSingle();
+ if(err||!q)throw err??new Error("Pergunta não encontrada.");
+ if(q.status!=="rascunho"||!q.ativa)throw new Error("Somente rascunhos podem ser publicados.");
+ await ensureCycleWithoutAnswers(q.ciclo_id);
+ const{error}=await db.from("perguntas_avaliacao").update({status:"publicada",atualizado_em:new Date().toISOString()}).eq("id",id).eq("status","rascunho");
+ if(error)throw error;
+ await audit(c,"publish_question","perguntas_avaliacao",id,{codigo:q.codigo,titulo:q.titulo});
+ return{ok:true};
+}
+async function setSelfEvaluation(c:any,b:any){
+ if(typeof b.permitida!=="boolean")throw new Error("Informe permitida como verdadeiro ou falso.");
+ const{data:current,error:readErr}=await db.from("configuracoes_sistema_runtime").select("valor")
+  .eq("chave","avaliacao.autoavaliacao.permitida").maybeSingle();
+ if(readErr)throw readErr;
+ const before=current?.valor?.permitida===true;
+ const next={permitida:b.permitida,alterada_em:new Date().toISOString(),reversivel:true};
+ const{error}=await db.from("configuracoes_sistema_runtime")
+  .upsert({chave:"avaliacao.autoavaliacao.permitida",valor:next,
+    descricao:"Permite ou bloqueia o preenchimento da ficha do próprio coordenador.",
+    atualizado_por:c.user.id,atualizado_em:new Date().toISOString()},{onConflict:"chave"});
+ if(error)throw error;
+ await audit(c,"set_self_evaluation","configuracoes_sistema_runtime","avaliacao.autoavaliacao.permitida",{antes:before,depois:b.permitida});
+ return{ok:true,permitida:b.permitida};
 }
 async function archiveQuestion(c:any,b:any){
  const id=String(b.id??"");
@@ -100,5 +143,5 @@ async function showCoordinatorPin(c:any,b:any){
  if(error)throw error;
  return data?.[0]?{ok:true,status:"confirmed",rol:data[0].rol,pin:data[0].pin}:{ok:true,status:"pending"};
 }
-async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
+async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"publish_question":return json(await publishQuestion(c,b));case"set_self_evaluation":return json(await setSelfEvaluation(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});

@@ -116,3 +116,9 @@ documentado na PR #1, antes de ativar o fluxo especial em produção.
 ## 2026-10-14 — Publicação controlada do formulário
 - rod27-coordinator v5: perguntas somente com status publicada e config publicada; confirm_notice, save_answer e submit recusam formulário em rascunho.
 - Preserva as 42 credenciais, os PINs no Vault e as 253 avaliações. Não publica perguntas automaticamente.
+
+## 2026-10-14 — Autorização e entrega do formulário v1
+- Seis perguntas originais oficialmente publicadas com autorização do responsável; autoavaliação dos 42 coordenadores permitida de forma reversível. Migrações rod27_publish_approved_six_questions_and_authorize_self_evaluation e rod27_protect_published_question_edits_by_cycle aplicadas ao Supabase.
+- Supabase rod27-coordinator v6, rod27-admin v7, rod27-control v5; código vivo recuperado para o repositório.
+- Interfaces coordenador, Secretaria e Controle sincronizadas; Cloudflare Pages publicada: https://fc57cd79.rod27-ieadern.pages.dev.
+- Restam homologação autenticada de ponta a ponta em ambiente isolado, revisão visual profunda e ativação humana do acesso do Pr. Rubem.
