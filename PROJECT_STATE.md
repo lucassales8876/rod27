@@ -122,3 +122,11 @@ documentado na PR #1, antes de ativar o fluxo especial em produção.
 - Supabase rod27-coordinator v6, rod27-admin v7, rod27-control v5; código vivo recuperado para o repositório.
 - Interfaces coordenador, Secretaria e Controle sincronizadas; Cloudflare Pages publicada: https://fc57cd79.rod27-ieadern.pages.dev.
 - Restam homologação autenticada de ponta a ponta em ambiente isolado, revisão visual profunda e ativação humana do acesso do Pr. Rubem.
+
+## 2026-10-14 — Inspecao visual e revisao final da publicacao
+- Cloudflare Pages implantada: https://fc57cd79.rod27-ieadern.pages.dev (versao ativa).
+- Inspecao com Playwright e Chrome real no Mac: Controle, Secretaria e Coordenador em 1366px desktop e 390px celular, dados ficticios injetados apenas na pagina, zero registros de producao alterados. Todos os seis cenarios sem erros JS e sem overflow horizontal.
+- Teste UI isolado: formulario de pergunta publicada editavel antes de respostas, controles do tipo/obrigatoriedade e toggle de autoavaliacao presentes. Ficha do proprio coordenador abre fluxo de confirmacao com autoavaliacao habilitada.
+- Banco de producao: seis perguntas publicadas, 42 credenciais e 42 PINs Vault preservados, 253 fichas e zero respostas/enviadas.
+- Migracao de protecao adicional aplicada: 20261015002615 rod27_enforce_only_published_questions_in_answers_and_submit (somente perguntas publicadas contam no envio e na validacao).
+- Pendente apenas homologacao autenticada ponta a ponta com ambiente ou conta de teste e primeiro acesso real do Pr. Rubem; nao utilizar fichas e credenciais de coordenadores reais para testes de escrita.
