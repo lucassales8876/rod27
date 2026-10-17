@@ -258,7 +258,7 @@ async function logout(req: Request) {
 async function getOwnedEvaluation(ctx: any, id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data, error } = await db.from("avaliacoes_dirigente")
-    .select("id,ciclo_id,coordenacao_id,congregacao_id,dirigente_rol,dirigente_nome_snapshot,dirigente_foto_url_snapshot,congregacao_nome_snapshot,eh_proprio_coordenador,status,aviso_confirmado_em,iniciada_em,enviada_em")
+    .select("id,ciclo_id,coordenacao_id,congregacao_id,dirigente_rol,dirigente_nome_snapshot,dirigente_foto_url_snapshot,congregacao_nome_snapshot,eh_proprio_coordenador,status,aviso_confirmado_em,iniciada_em,enviada_em,formulario_versao,formulario_snapshot")
     .eq("id", id).eq("ciclo_id", ctx.coord.ciclo_id).eq("coordenacao_id", ctx.coord.id).maybeSingle();
   return error || data?.eh_proprio_coordenador ? null : data;
 }
@@ -304,11 +304,11 @@ async function saveManifestation(ctx: any, body: any, submit: boolean) {
   if (optionRaw && !MANIFEST_OPTIONS.has(optionRaw)) return fail("Opção de movimentação inválida.", 400);
   const option = wants === true ? (optionRaw || null) : null;
   const reasonRaw = body?.justificativa == null ? "" : String(body.justificativa);
-  const reason = wants === false ? reasonRaw.trim() : null;
+  const reason = reasonRaw.trim() || null;
   if (reasonRaw.length > 4000) return fail("A justificativa deve ter no máximo 4.000 caracteres.", 400);
   if (submit && wants === null) return fail("Responda se deseja permanecer no próximo rodízio.", 400);
   if (submit && wants === true && !option) return fail("Selecione uma opção de permanência ou mudança.", 400);
-  if (submit && wants === false && !reason) return fail("A justificativa é obrigatória quando não deseja permanecer.", 400);
+  if (submit && (wants === false || (wants === true && option !== "mesma_congregacao")) && !reason) return fail("Informe o motivo da mudança ou da saída do rodízio.", 400);
   const now = new Date().toISOString();
   const payload = {
     ciclo_id: ctx.coord.ciclo_id,
@@ -409,7 +409,7 @@ async function handleAuthorized(ctx: any, body: any) {
       db.from("respostas_avaliacao").select("pergunta_id,resposta_texto,resposta_opcao,atualizado_em").eq("avaliacao_id", evaluation.id),
     ]);
     return json({
-      ok: true, evaluation, config, questions: config?.status === "publicado" ? (questions ?? []) : [], answers: answers ?? [],
+      ok: true, evaluation, config: evaluation.formulario_snapshot?.config ?? config, questions: config?.status === "publicado" ? (evaluation.formulario_snapshot?.questions ?? questions ?? []) : [], answers: answers ?? [],
       editable: config?.status === "publicado" && evaluation.status !== "enviada" && (!evaluation.eh_proprio_coordenador || await selfEvaluationAllowed()),
       special_reason: evaluation.eh_proprio_coordenador && !(await selfEvaluationAllowed())
         ? "A avaliação do próprio coordenador será tratada separadamente pela Secretaria."
@@ -444,10 +444,17 @@ async function handleAuthorized(ctx: any, body: any) {
     if (!value) return fail("A resposta não pode ficar vazia.", 400);
     if (value.length > 12000) return fail("Resposta muito longa.", 400);
 
-    const { data: q } = await db.from("perguntas_avaliacao")
-      .select("id,codigo,tipo_resposta,opcoes").eq("ciclo_id", ctx.coord.ciclo_id)
-      .eq("codigo", code).eq("ativa", true).eq("status","publicada").maybeSingle();
-    if (!q) return fail("Pergunta inválida.", 400);
+    const frozenQuestions = evaluation.formulario_snapshot?.questions;
+    let q: any = Array.isArray(frozenQuestions)
+      ? frozenQuestions.find((item: any) => item.codigo === code) ?? null
+      : null;
+    if (!Array.isArray(frozenQuestions)) {
+      const { data: current } = await db.from("perguntas_avaliacao")
+        .select("id,codigo,tipo_resposta,opcoes").eq("ciclo_id", ctx.coord.ciclo_id)
+        .eq("codigo", code).eq("ativa", true).eq("status","publicada").maybeSingle();
+      q = current;
+    }
+    if (!q) return fail("Pergunta não pertence à versão desta avaliação.", 400);
 
     const payload: Record<string, unknown> = {
       avaliacao_id: evaluation.id, pergunta_id: q.id, atualizado_em: new Date().toISOString(),

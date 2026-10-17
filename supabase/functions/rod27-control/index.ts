@@ -7,6 +7,18 @@ const PAGE="<!doctype html>\n<html lang=\"pt-BR\"><head>\n<meta charset=\"utf-8\
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"content-type, authorization","Access-Control-Allow-Methods":"GET, POST, OPTIONS"};
 function json(data:unknown,status=200){return new Response(JSON.stringify(data),{status,headers:{...cors,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}})}function fail(message:string,status=400){return json({ok:false,error:message},status)}
 async function ctx(req:Request){const h=req.headers.get("authorization")??"";if(!h.startsWith("Bearer "))return null;const{data,error}=await db.auth.getUser(h.slice(7).trim());if(error||!data.user)return null;const{data:a}=await db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo").eq("user_id",data.user.id).eq("ativo",true).maybeSingle();return a?.papel==="superadmin"?{user:data.user,admin:a}:null}
+async function removeAuditEntry(c:any,b:any){
+ const id=String(b.registro_id??"").trim();
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+  throw new Error("Registro de auditoria inválido.");
+ const orderedBy=String(b.solicitante??"").trim(), reason=String(b.motivo??"").trim();
+ if(orderedBy.length<3||orderedBy.length>160||reason.length<12||reason.length>2000)
+  throw new Error("Informe quem solicitou e justifique a exclusão (mínimo 12 caracteres).");
+ const{data,error}=await db.rpc("rod27_remove_audit_entry",{
+  p_registro:id,p_admin:c.user.id,p_solicitante:orderedBy,p_motivo:reason});
+ if(error)throw error;
+ return{ok:true,result:data};
+}
 async function audit(c:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:c.user.id,papel:c.admin.papel,acao,entidade,entidade_id:id,detalhes})}
 async function bootstrap(c:any){const[{data:health,error:hErr},{data:questions},{data:settings},{data:admins},{data:logs}]=await Promise.all([db.rpc("rod27_system_health"),db.from("perguntas_avaliacao").select("id,codigo,ordem,categoria,titulo,enunciado,tipo_resposta,opcoes,obrigatoria,versao,status,ativa").order("ordem"),db.from("configuracoes_sistema_runtime").select("chave,valor,descricao,atualizado_em").order("chave"),db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo,criado_em").order("criado_em"),db.from("auditoria_sistema").select("id,papel,acao,entidade,entidade_id,detalhes,criado_em").order("criado_em",{ascending:false}).limit(60)]);if(hErr)throw hErr;
 const [pagesQ,ownQ,invitesQ]=await Promise.all([
@@ -25,7 +37,7 @@ const checks=[
   {id:"questions",title:"Publicação do formulário",ok:published>0,detail:`${published} perguntas publicadas; ${(questions??[]).filter((x:any)=>x.status==="rascunho").length} em rascunho`},
   {id:"administrators",title:"Primeiro acesso administrativo",ok:Number(health.admins)>=2,detail:`${health.admins} contas ativas; ${validInvites} convites válidos ainda não utilizados`},
   {id:"coordinator_access",title:"Liberação de credenciais",ok:Number(health.credenciais_ativas)===42,detail:`${health.credenciais_ativas} de 42 coordenadores com acesso liberado`},
-  {id:"own_coordinator",title:"Avaliação dos próprios coordenadores",ok:ownCount===0||selfAllowed,detail:selfAllowed?`${ownCount} autoavaliações autorizadas e habilitadas (regra reversível)`:ownCount?`${ownCount} fichas exigem decisão administrativa`:"Nenhuma ficha especial pendente"}
+  {id:"own_coordinator",title:"Feedback dos coordenadores ao pastor",ok:ownCount===42,detail:String(ownCount)+" fichas próprias identificadas para manifestação separada"}
 ];
 const readiness={checks,ready_for_launch:checks.every((x:any)=>x.ok),checked_at:new Date().toISOString()};
 const users:any[]=[];for(const a of admins??[]){const{data:u}=await db.auth.admin.getUserById(a.user_id);users.push({...a,email:u.user?.email??null})}return{ok:true,admin:{email:c.user.email,nome_exibicao:c.admin.nome_exibicao,papel:c.admin.papel},health,readiness,questions:questions??[],settings:settings??[],admins:users,audit:logs??[]}}
@@ -63,7 +75,7 @@ async function updateQuestion(c:any,b:any){
  if(readErr)throw readErr;
  if(!q)throw new Error("Pergunta não encontrada.");
  if(!q.ativa||!["rascunho","publicada"].includes(q.status))throw new Error("Pergunta arquivada não pode ser alterada.");
- if(q.status==="publicada")await ensureCycleWithoutAnswers(q.ciclo_id);
+ // Alterações publicadas criam nova versão sem modificar avaliações já iniciadas.
  const payload=validateQuestionInput(b,q);
  const{error}=await db.from("perguntas_avaliacao").update({...payload,atualizado_em:new Date().toISOString()}) .eq("id",id).eq("status",q.status).eq("ativa",true);
  if(error)throw error;
@@ -91,27 +103,13 @@ async function publishQuestion(c:any,b:any){
   .eq("id",id).maybeSingle();
  if(err||!q)throw err??new Error("Pergunta não encontrada.");
  if(q.status!=="rascunho"||!q.ativa)throw new Error("Somente rascunhos podem ser publicados.");
- await ensureCycleWithoutAnswers(q.ciclo_id);
+ // Publicar novo item cria versão, mantendo os formulários antigos.
  const{error}=await db.from("perguntas_avaliacao").update({status:"publicada",atualizado_em:new Date().toISOString()}).eq("id",id).eq("status","rascunho");
  if(error)throw error;
  await audit(c,"publish_question","perguntas_avaliacao",id,{codigo:q.codigo,titulo:q.titulo});
  return{ok:true};
 }
-async function setSelfEvaluation(c:any,b:any){
- if(typeof b.permitida!=="boolean")throw new Error("Informe permitida como verdadeiro ou falso.");
- const{data:current,error:readErr}=await db.from("configuracoes_sistema_runtime").select("valor")
-  .eq("chave","avaliacao.autoavaliacao.permitida").maybeSingle();
- if(readErr)throw readErr;
- const before=current?.valor?.permitida===true;
- const next={permitida:b.permitida,alterada_em:new Date().toISOString(),reversivel:true};
- const{error}=await db.from("configuracoes_sistema_runtime")
-  .upsert({chave:"avaliacao.autoavaliacao.permitida",valor:next,
-    descricao:"Permite ou bloqueia o preenchimento da ficha do próprio coordenador.",
-    atualizado_por:c.user.id,atualizado_em:new Date().toISOString()},{onConflict:"chave"});
- if(error)throw error;
- await audit(c,"set_self_evaluation","configuracoes_sistema_runtime","avaliacao.autoavaliacao.permitida",{antes:before,depois:b.permitida});
- return{ok:true,permitida:b.permitida};
-}
+async function setSelfEvaluation(_c:any,_b:any){throw new Error("Não existe autoavaliação de desempenho. O feedback próprio é enviado pela Manifestação de Interesse.");}
 async function archiveQuestion(c:any,b:any){
  const id=String(b.id??"");
  const{data:q,error:readErr}=await db.from("perguntas_avaliacao").select("id,codigo,titulo,status,ativa").eq("id",id).maybeSingle();
@@ -143,5 +141,5 @@ async function showCoordinatorPin(c:any,b:any){
  if(error)throw error;
  return data?.[0]?{ok:true,status:"confirmed",rol:data[0].rol,pin:data[0].pin}:{ok:true,status:"pending"};
 }
-async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"publish_question":return json(await publishQuestion(c,b));case"set_self_evaluation":return json(await setSelfEvaluation(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
+async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"publish_question":return json(await publishQuestion(c,b));case"set_self_evaluation":return json(await setSelfEvaluation(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"remove_audit_entry":return json(await removeAuditEntry(c,b));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});
