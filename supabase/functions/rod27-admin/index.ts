@@ -32,6 +32,16 @@ async function map2026(ctx:any){
    .select("setor_id,obreiro_rol,coordenador_nome_snapshot,ano_base_designacao")
    .eq("ciclo_id",cycle.id).eq("ano_base_designacao",2026);
  if(coerr)throw coerr;
+ const {data:evaluations,error:evError}=await db.from("avaliacoes_dirigente")
+  .select("id,congregacao_id,dirigente_rol,status,enviada_em,origem_preenchimento")
+  .eq("ciclo_id",cycle.id).eq("eh_proprio_coordenador",false);
+ if(evError)throw evError;
+ const evalIndex=new Map<string,any[]>();
+ for(const ev of evaluations??[]){
+  const index=ev.congregacao_id+"::"+ev.dirigente_rol;
+  const matches=evalIndex.get(index)??[];
+  matches.push(ev);evalIndex.set(index,matches);
+ }
  const perSector=new Map((sectors??[]).map((x:any)=>[x.id,x]));
  const byArea=new Map<string,any>();
  const byNumber=new Map<number,any>();
@@ -61,12 +71,17 @@ async function map2026(ctx:any){
   if(list.length===0)absent++;
   if(list.length>1)conflicts++;
   const first=list.length===1?list[0]:null;
+  const linked=first?(evalIndex.get(church.id+"::"+first.obreiro_rol)??[]):[];
+  const matched=linked.length===1?linked[0]:null;
   parent.congregacoes.push({
    id:church.id,codigo:church.codigo_origem,nome:church.nome,area:parent.area,setor:church.setor,
    dirigente:first?{nome:first.dirigente_nome_snapshot,rol:first.obreiro_rol,
      foto_url:first.dirigente_foto_url_snapshot,atualizado_em:first.atualizado_em}:null,
    estado:list.length===1?"identificado":list.length>1?"conflito":"sem_designacao",
-   quantidade_designacoes:list.length
+   quantidade_designacoes:list.length,
+   avaliacao:matched?{id:matched.id,status:matched.status,enviada_em:matched.enviada_em,
+    origem:matched.origem_preenchimento,ciclo:2027}:null,
+   avaliacao_ambigua:linked.length>1
   });
  }
  const romanValue=(input:string)=>{
