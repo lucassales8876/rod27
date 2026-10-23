@@ -56,6 +56,57 @@ async function removeAuditEntry(c:any,b:any,req:Request){
  return{ok:true,result:data};
 }
 async function audit(c:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:c.user.id,papel:c.admin.papel,acao,entidade,entidade_id:id,detalhes})}
+async function operationalHealth(req:Request){
+ const probe=async(id:string,title:string,url:string,accepted:number[]= [200],method="GET",body?:string)=>{
+  const started=Date.now();
+  try{
+   const headers:Record<string,string>={"cache-control":"no-cache"};
+   if(id==="auth")headers["apikey"]=KEY;
+   if(method==="POST"){headers["Content-Type"]="application/json";headers["Authorization"]=req.headers.get("authorization")??""}
+   const response=await fetch(url,{method,headers,body,cache:"no-store",signal:AbortSignal.timeout(7000)});
+   let ok=accepted.includes(response.status);
+   if(id==="admin_backend"&&ok){
+    const data=await response.json().catch(()=>({ok:false}));
+    ok=data.ok===true&&!!data.admin;
+   }
+   return{id,title,ok,http:response.status,ms:Date.now()-started};
+  }catch(err){
+   return{id,title,ok:false,http:null,ms:Date.now()-started,
+    error:err instanceof Error?err.name:"Indisponível"};
+  }
+ };
+ const site="https://rod27-ieadern.pages.dev",base="https://zrjxxcytgtjuuinhkfux.supabase.co";
+ const calls=[
+  probe("root","Raiz protegida",site+"/",[404]),
+  probe("coordinator_page","Página dos coordenadores",site+"/coordenador"),
+  probe("secretary_page","Página da Secretaria",site+"/secretaria"),
+  probe("control_page","Página do Controle",site+"/controle"),
+  probe("onboarding_page","Página de primeiro acesso",site+"/primeiro-acesso"),
+  probe("recovery_page","Página de recuperação",site+"/redefinir-senha"),
+  probe("auth","Autenticação Supabase",base+"/auth/v1/settings"),
+  probe("coordinator_backend","Função dos coordenadores",base+"/functions/v1/rod27-coordinator",[200]),
+  probe("onboarding_backend","Função de primeiro acesso",base+"/functions/v1/rod27-first-access",[200]),
+  probe("admin_backend","Função da Secretaria (autenticada)",base+"/functions/v1/rod27-admin",[200],"POST",JSON.stringify({action:"bootstrap"}))
+ ];
+ const [checks,heartbeat,sessions]=await Promise.all([
+  Promise.all(calls),
+  db.rpc("rod27_heartbeat"),
+  db.rpc("rod27_operational_sessions")
+ ]);
+ const allChecks=[...checks,{
+  id:"control_backend",title:"Função de Controle (autenticada)",ok:true,http:200,ms:null
+ },{
+  id:"database",title:"Banco Postgres",ok:!heartbeat.error&&Array.isArray(heartbeat.data)&&heartbeat.data[0]?.ok===true,
+  http:null,ms:null,error:heartbeat.error?"Consulta falhou":undefined
+ },{
+  id:"sessions",title:"Leitura de sessões",ok:!sessions.error&&!!sessions.data,
+  http:null,ms:null,error:sessions.error?"Consulta falhou":undefined
+ }];
+ const list= sessions.error?{checked_at:null,administrators:[],coordinators:[]}:(sessions.data??{administrators:[],coordinators:[]});
+ return {ok:true,checked_at:new Date().toISOString(),checks:allChecks,
+  healthy:allChecks.every((x:any)=>x.ok),issues:allChecks.filter((x:any)=>!x.ok).length,
+  sessions:list,notes:"Verificações de acesso e consultas; não substituem testes completos de preenchimento e envio."};
+}
 async function bootstrap(c:any){const[{data:health,error:hErr},{data:questions},{data:settings},{data:admins},{data:logs}]=await Promise.all([db.rpc("rod27_system_health"),db.from("perguntas_avaliacao").select("id,codigo,ordem,categoria,titulo,enunciado,tipo_resposta,opcoes,obrigatoria,versao,status,ativa").order("ordem"),db.from("configuracoes_sistema_runtime").select("chave,valor,descricao,atualizado_em").order("chave"),db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo,criado_em").order("criado_em"),db.from("auditoria_sistema").select("id,papel,acao,entidade,entidade_id,detalhes,criado_em").order("criado_em",{ascending:false}).limit(60)]);if(hErr)throw hErr;
 const [pagesQ,ownQ,invitesQ]=await Promise.all([
   db.from("paginas_coordenador").select("id",{head:true,count:"exact"}).eq("ativa",true),
@@ -177,5 +228,5 @@ async function showCoordinatorPin(c:any,b:any){
  if(error)throw error;
  return data?.[0]?{ok:true,status:"confirmed",rol:data[0].rol,pin:data[0].pin}:{ok:true,status:"pending"};
 }
-async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"publish_question":return json(await publishQuestion(c,b));case"set_self_evaluation":return json(await setSelfEvaluation(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"authorize_audit_removal":return json(await issueAuditGrant(c,b,req));case"remove_audit_entry":return json(await removeAuditEntry(c,b,req));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
+async function handle(req:Request){const c=await ctx(req);if(!c)return fail("Acesso restrito ao superadmin.",403);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)}try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(c));case"operational_health":return json(await operationalHealth(req));case"show_coordinator_pin":return json(await showCoordinatorPin(c,b));case"update_question":return json(await updateQuestion(c,b));case"create_question":return json(await createQuestion(c,b));case"archive_question":return json(await archiveQuestion(c,b));case"publish_question":return json(await publishQuestion(c,b));case"set_self_evaluation":return json(await setSelfEvaluation(c,b));case"update_setting":return json(await updateSetting(c,b));case"create_admin":return json(await createAdmin(c,b));case"authorize_audit_removal":return json(await issueAuditGrant(c,b,req));case"remove_audit_entry":return json(await removeAuditEntry(c,b,req));case"revoke_all_coordinator_sessions":return json(await revokeAll(c));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha de controle.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});

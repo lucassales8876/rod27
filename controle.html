@@ -14,9 +14,9 @@ main{padding:18px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:14px}.t
 </style></head><body>
 <div id="app" class="shell"></div><div id="back" class="back"><div id="modal" class="modal"></div></div><div id="toast" class="toast"></div>
 <script>
-var U="https://zrjxxcytgtjuuinhkfux.supabase.co",K="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh",S={a:null,r:null,data:null,tab:"overview"},app=document.getElementById("app"),back=document.getElementById("back"),box=document.getElementById("modal");
+var U="https://zrjxxcytgtjuuinhkfux.supabase.co",K="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh",S={a:null,r:null,data:null,tab:"overview",auditOpen:false,ops:null,opsBusy:false,opsAt:0},app=document.getElementById("app"),back=document.getElementById("back"),box=document.getElementById("modal");
 function e(v){return String(v==null?"":v).replace(/[&<>"']/g,function(x){return{"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[x]})}function toast(m){var x=document.getElementById("toast");x.textContent=m;x.classList.add("show");setTimeout(function(){x.classList.remove("show")},2200)}
-function ss(d){S.a=d.access_token;S.r=d.refresh_token;sessionStorage.setItem("ctl_a",S.a||"");sessionStorage.setItem("ctl_r",S.r||"")}function clr(){AUDIT_AUTH.grant=null;S.a=null;S.r=null;sessionStorage.removeItem("ctl_a");sessionStorage.removeItem("ctl_r")}
+function ss(d){S.a=d.access_token;S.r=d.refresh_token;sessionStorage.setItem("ctl_a",S.a||"");sessionStorage.setItem("ctl_r",S.r||"")}function clr(){AUDIT_AUTH.grant=null;S.auditOpen=false;AUD_TAPS=0;S.ops=null;S.opsAt=0;S.a=null;S.r=null;sessionStorage.removeItem("ctl_a");sessionStorage.removeItem("ctl_r")}
 async function rf(){if(!S.r)return false;var x=await fetch(U+"/auth/v1/token?grant_type=refresh_token",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({refresh_token:S.r})});if(!x.ok){clr();return false}ss(await x.json());return true}
 async function api(action,p,retry){var x=await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-control",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+S.a},body:JSON.stringify(Object.assign({action:action},p||{}))});if((x.status===401||x.status===403)&&!retry&&await rf())return api(action,p,true);var j=await x.json().catch(function(){return{ok:false,error:"Resposta inválida."}});if(x.status===401||x.status===403){clr();back.classList.remove("show");login("Sua sessão expirou ou não está autorizada. Entre novamente.");throw new Error("Sessão expirada ou acesso não autorizado.")}if(!x.ok||!j.ok)throw new Error(j.error||"Falha.");return j}
 function toggleSenha(btn){
@@ -37,11 +37,50 @@ window.recoverLogin=async function(){
 window.doLogin=async function(){var er=document.getElementById("er");er.textContent="Entrando…";try{var x=await fetch(U+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("em").value.trim(),password:document.getElementById("pw").value})}),j=await x.json();if(!x.ok)throw new Error("E-mail ou senha inválidos.");ss(j);await boot()}catch(z){er.textContent=z.message}}
 window.logout=function(){AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
 function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],["admins","Contas e PINs"],["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
-window.setTab=function(t){S.tab=t;render();if(t==="admins")loadCoordinatorAccess()};
+var AUD_TAPS=0;
+window.setTab=function(t){
+ if(t==="audit"){AUD_TAPS=S.tab==="audit"?AUD_TAPS+1:1;S.tab=t;if(AUD_TAPS>=3){AUD_TAPS=0;S.auditOpen=true;}}
+ else{AUD_TAPS=0;S.auditOpen=false;S.tab=t;}
+ render();
+ if(t==="admins")loadCoordinatorAccess();
+ if(t==="overview")refreshHealth(false);
+};
 function render(){var d=S.data;app.innerHTML='<section class="hero"><div class="top"><div><div class="ey">ROD27 · CENTRAL DE CONTROLE</div><h1>Controle do sistema</h1><p>'+e(d.admin.nome_exibicao||d.admin.email)+' · superadmin</p></div><div class="actions"><button class="btn ghost small" onclick="window.open(&quot;/secretaria&quot;,&quot;_blank&quot;)">Abrir painel do Rodízio</button><button class="btn ghost small" onclick="logout()">Sair</button></div></div></section><main>'+tabs()+'<div id="view">'+view()+'</div></main>'}
 function view(){var d=S.data;if(S.tab==="overview")return overview(d);if(S.tab==="questions")return questions(d);if(S.tab==="settings")return settings(d);if(S.tab==="admins")return admins(d);return audit(d)}
+function healthPanel(){
+ var x=S.ops,h='<div class="card" style="margin-bottom:12px"><div class="top"><div><h3>Saúde do sistema</h3><p class="muted">Consultas reais a páginas, serviços e banco. Uma resposta HTTP não garante que todo o formulário esteja sem defeitos.</p></div><button type="button" class="btn ghost small" onclick="refreshHealth(true)">Atualizar verificações</button></div>';
+ if(!x)return h+'<p class="muted">'+(S.opsBusy?"Verificando os serviços…":"Sem verificação recente.")+'</p></div>';
+ if(x.error)return h+'<p class="pill warn">Não foi possível consultar a saúde</p><p class="muted">'+e(x.error)+'</p></div>';
+ var failures=(x.checks||[]).filter(function(c){return !c.ok}).length;
+ h+='<div class="actions"><span class="pill '+(failures?"warn":"ok")+'">'+(failures?failures+" itens requerem atenção":"Sem falhas nas verificações")+'</span><span class="muted">'+e(new Date(x.checked_at).toLocaleString("pt-BR"))+'</span></div>';
+ h+='<div class="grid" style="margin-top:12px">'+(x.checks||[]).map(function(c){return'<div class="card" style="padding:10px"><div class="top"><strong>'+e(c.title)+'</strong><span class="pill '+(c.ok?"ok":"warn")+'">'+(c.ok?"OK":"Falha")+'</span></div><div class="muted">'+(c.http===null?'Consulta interna':"HTTP "+e(c.http))+(typeof c.ms==="number"?" · "+e(c.ms)+" ms":"")+(c.error?" · "+e(c.error):"")+'</div></div>'}).join("")+'</div>';
+ var ss=x.sessions||{},admins=Array.isArray(ss.administrators)?ss.administrators:[],coord=Array.isArray(ss.coordinators)?ss.coordinators:[],recent=admins.filter(function(z){return z.recente}).length+coord.filter(function(z){return z.recente}).length;
+ h+='<div class="card" style="margin-top:12px"><h3>Sessões registradas</h3><p class="muted">'+admins.length+' administrativas · '+coord.length+' de coordenadores · '+recent+' com atividade nos últimos 15 minutos.</p><p class="muted">“Atividade recente” não comprova que a pessoa esteja com a janela aberta neste instante. Sessões administrativas são registros no serviço Auth.</p></div>';
+ var fmt=function(dt){return dt?e(new Date(dt).toLocaleString("pt-BR")):"Não informado"};
+ var st=function(z){return'<span class="pill '+(z.recente?"ok":"warn")+'">'+(z.recente?"Recente":"Sem atividade recente")+'</span>'};
+ h+='<div style="overflow-x:auto"><h3>Sessões dos coordenadores</h3><table class="table"><thead><tr><th>Setor</th><th>Coordenador</th><th>ROL</th><th>Último uso</th><th>Validade</th><th>Atividade</th></tr></thead><tbody>'+
+ (coord.length?coord.map(function(z){return'<tr><td>'+e(z.setor)+'</td><td>'+e(z.coordenador)+'</td><td>'+e(z.rol)+'</td><td>'+fmt(z.ultimo_uso||z.inicio)+'</td><td>'+fmt(z.expira_em)+'</td><td>'+st(z)+'</td></tr>'}).join(""):'<tr><td colspan="6">Nenhuma sessão de coordenador registrada como válida.</td></tr>')+'</tbody></table></div>';
+ h+='<div style="overflow-x:auto;margin-top:14px"><h3>Sessões administrativas</h3><table class="table"><thead><tr><th>Conta</th><th>Perfil</th><th>Última atualização</th><th>Limite informado</th><th>Atividade</th></tr></thead><tbody>'+
+ (admins.length?admins.map(function(z){return'<tr><td>'+e(z.nome)+'</td><td>'+e(z.papel)+'</td><td>'+fmt(z.ultimo_uso||z.inicio)+'</td><td>'+fmt(z.expira_em)+'</td><td>'+st(z)+'</td></tr>'}).join(""):'<tr><td colspan="5">Nenhuma sessão administrativa registrada.</td></tr>')+'</tbody></table></div>';
+ return h+'</div>';
+}
+window.refreshHealth=async function(force){
+ if(!S.a||S.tab!=="overview"||S.opsBusy)return;
+ if(!force&&S.ops&&Date.now()-S.opsAt<60000)return;
+ S.opsBusy=true;
+ try{S.ops=await api("operational_health",{});S.opsAt=Date.now()}
+ catch(err){S.ops={error:err.message||"Indisponível"};S.opsAt=Date.now()}
+ finally{S.opsBusy=false}
+ if(S.tab==="overview"&&S.data){
+  var el=document.getElementById("view");
+  if(el)el.innerHTML=view();
+ }
+};
+setInterval(function(){
+ if(S.a&&S.tab==="overview"&&document.visibilityState==="visible")refreshHealth(false);
+},120000);
 function overview(d){var h=d.health,g=(d.readiness&&d.readiness.checks)||[];
-var pre='<div class="card" style="margin-bottom:12px"><h3>Preparação do Rodízio 2027</h3><p class="muted">Verificações automáticas do sistema; não liberam acessos nem publicam formulários.</p>'+g.map(function(x){return'<div class="row" style="display:flex;gap:12px;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e3ddd2"><div><b>'+e(x.title)+'</b><div class="muted">'+e(x.detail)+'</div></div><span class="pill '+(x.ok?"ok":"warn")+'">'+(x.ok?"Pronto":"Pendente")+'</span></div>'}).join("")+'</div>';return pre+'<div class="grid"><div class="card kpi"><strong>'+e(h.database_size)+'</strong><span>Banco de dados</span></div><div class="card kpi"><strong>'+h.setores+'</strong><span>Setores</span></div><div class="card kpi"><strong>'+h.avaliacoes+'</strong><span>Avaliações</span></div><div class="card kpi"><strong>'+h.credenciais_ativas+'</strong><span>Coordenadores ativos</span></div><div class="card kpi"><strong>'+h.sessoes_ativas+'</strong><span>Sessões ativas</span></div><div class="card kpi"><strong>'+h.admins+'</strong><span>Contas administrativas</span></div></div><div class="card" style="margin-top:12px"><h3>Estado operacional</h3><p>Edge do coordenador: <span class="pill ok">publicada</span> · Painel Secretaria: <span class="pill ok">publicado</span></p><p class="muted">O diagnóstico desta tela é gerado diretamente do banco institucional Rod27.</p><div class="actions"><button class="btn danger" onclick="revokeAll()">Encerrar todas as sessões de coordenadores</button></div></div>'}
+var pre='<div class="card" style="margin-bottom:12px"><h3>Preparação do Rodízio 2027</h3><p class="muted">Verificações automáticas do sistema; não liberam acessos nem publicam formulários.</p>'+g.map(function(x){return'<div class="row" style="display:flex;gap:12px;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e3ddd2"><div><b>'+e(x.title)+'</b><div class="muted">'+e(x.detail)+'</div></div><span class="pill '+(x.ok?"ok":"warn")+'">'+(x.ok?"Pronto":"Pendente")+'</span></div>'}).join("")+'</div>';return healthPanel()+pre+'<div class="grid"><div class="card kpi"><strong>'+e(h.database_size)+'</strong><span>Banco de dados</span></div><div class="card kpi"><strong>'+h.setores+'</strong><span>Setores</span></div><div class="card kpi"><strong>'+h.avaliacoes+'</strong><span>Avaliações</span></div><div class="card kpi"><strong>'+h.credenciais_ativas+'</strong><span>Coordenadores ativos</span></div><div class="card kpi"><strong>'+h.sessoes_ativas+'</strong><span>Sessões ativas</span></div><div class="card kpi"><strong>'+h.admins+'</strong><span>Contas administrativas</span></div></div><div class="card" style="margin-top:12px"><h3>Manutenção</h3><p class="muted">O diagnóstico atualizado dos serviços, páginas e sessões está disponível no painel Saúde do sistema, acima.</p><div class="actions"><button class="btn danger" onclick="revokeAll()">Encerrar todas as sessões de coordenadores</button></div></div>'}
 function questions(d){
  var all=d.questions||[],active=all.filter(function(q){return q.ativa&&q.status!=="arquivada"}).sort(function(a,b){return a.ordem-b.ordem}),archived=all.filter(function(q){return !q.ativa||q.status==="arquivada"});
  var h='<div class="card"><div class="top"><div><h3>Editor do formulário dos coordenadores</h3><p class="muted">Gerencie título, enunciado, alternativas e obrigatoriedade. A Secretaria pode corrigir perguntas publicadas. Cada mudança cria uma nova versão, e avaliações já iniciadas preservam as perguntas originais. Rascunhos novos exigem publicação explícita.</p><p><span class="pill warn">'+active.filter(q=>q.status==="rascunho").length+' em rascunho</span> · '+active.length+' perguntas ativas</p></div><button class="btn primary small" onclick="newQ()">+ Nova pergunta</button></div></div>';
@@ -118,9 +157,10 @@ function settings(d){
  "coordenador.sessao.horas":["Duração máxima do acesso","Tempo até uma sessão autenticada expirar. Não tem relação com tentativas erradas de senha."],
  "coordenador.senha.formato":["Formato do PIN inicial","Padrão implementado: PIN de 6 dígitos. Mudar o texto deste campo não gera PINs novos nem modifica os existentes."]
  };
- return'<div class="card" style="margin-bottom:12px"><h3>Política de acesso dos coordenadores</h3><p class="muted">Estas opções são configurações de segurança, não uma lista de senhas. Para consultar ROLs ou gerar um PIN novo, use a aba <b>Contas e PINs</b>.</p></div><div class="grid">'+d.settings.map(function(x){
+ var units={"coordenador.login.bloqueio_minutos":"minutos","coordenador.login.max_falhas":"tentativas","coordenador.sessao.horas":"horas","coordenador.senha.formato":"dígitos"};
+ return'<div class="card" style="margin-bottom:12px"><h3>Política de acesso dos coordenadores</h3><p class="muted">Estas opções são configurações de segurança, não uma lista de senhas. Para consultar ROLs ou gerar um PIN novo, use a aba <b>Contas e PINs</b>.</p></div><div class="grid">'+d.settings.filter(function(x){return Object.prototype.hasOwnProperty.call(labels,x.chave)}).map(function(x){
  var a=labels[x.chave]||[x.chave,x.descricao||""],editable=x.chave!=="coordenador.senha.formato",v=typeof x.valor==="string"?x.valor:JSON.stringify(x.valor);
- return'<div class="card"><h3>'+e(a[0])+'</h3><p class="muted">'+e(a[1])+'</p><div class="field"><label>Valor atual</label>'+(editable?'<input type="number" min="1" max="1440" id="set_'+x.chave.replaceAll(".","_")+'" value="'+e(v)+'">':'<div class="code">PIN de 6 dígitos · formato fixo nesta versão</div>')+'</div>'+(editable?'<button class="btn primary small" onclick="saveSetting(&quot;'+x.chave+'&quot;)">Salvar configuração</button>':'')+'</div>'
+ return'<div class="card"><h3>'+e(a[0])+'</h3><p class="muted">'+e(a[1])+'</p><div class="field"><label>Valor atual ('+units[x.chave]+')</label>'+(editable?'<input type="number" min="1" max="1440" id="set_'+x.chave.replaceAll(".","_")+'" value="'+e(v)+'">':'<div class="code">PIN de 6 dígitos · formato fixo nesta versão</div>')+'</div>'+(editable?'<button class="btn primary small" onclick="saveSetting(&quot;'+x.chave+'&quot;)">Salvar configuração</button>':'')+'</div>'
  }).join("")+'</div>';
 }
 window.saveSetting=async function(k){var id="set_"+k.replaceAll(".","_"),v=document.getElementById(id).value;try{await api("update_setting",{chave:k,valor:v});toast("Configuração atualizada.");await boot(true)}catch(x){toast(x.message)}}
@@ -174,7 +214,7 @@ window.copyNewPin=async function(){
 };
 var AUDIT_AUTH={grant:null};
 function audit(d){
- var form='<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:9px;align-items:center"><input id="audit_joint_pass" aria-label="Autorização" type="password" autocomplete="off" style="width:min(360px,80%);border:1px solid var(--line);padding:11px;border-radius:10px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();authorizeAudit()}"><button type="button" class="btn ghost" aria-label="Confirmar" onclick="authorizeAudit()">✓</button></div></div>';
+ var form=S.auditOpen&&!AUDIT_AUTH.grant?'<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:9px;align-items:center"><input id="audit_joint_pass" aria-label="Autorização" type="password" autocomplete="off" style="width:min(360px,80%);border:1px solid var(--line);padding:11px;border-radius:10px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();authorizeAudit()}"><button type="button" class="btn ghost" aria-label="Confirmar" onclick="authorizeAudit()">✓</button></div></div>':"";
  return form+d.audit.map(function(a){
   return '<div class="audit"><strong>'+e(a.acao)+'</strong> · '+e(a.papel||"")+'<br><span class="muted">'+e(a.entidade||"")+' '+e(a.entidade_id||"")+' · '+e(new Date(a.criado_em).toLocaleString("pt-BR"))+'</span>'+
    (AUDIT_AUTH.grant?'<div class="actions"><button class="btn danger small" onclick="openAuditRemoval(&quot;'+e(a.id)+'&quot;)">Remover registro</button></div>':"")+'</div>';
@@ -185,11 +225,12 @@ window.authorizeAudit=async function(){
  if(!pw)return;
  try{
   var result=await api("authorize_audit_removal",{password:pw});
-  AUDIT_AUTH.grant=result.grant;inp.value="";toast("Autorizado.");render();
+  AUDIT_AUTH.grant=result.grant;S.auditOpen=false;inp.value="";render();
  }catch(err){
   AUDIT_AUTH.grant=null;
+  S.auditOpen=false;
   if(inp)inp.value="";
-  toast("Autorização recusada.");
+  render();
  }
 };
 window.openAuditRemoval=function(id){
@@ -205,6 +246,6 @@ window.removeAuditEntry=async function(id){
  catch(err){AUDIT_AUTH.grant=null;closeM();await boot(true);toast("Autorização inválida ou expirada. Valide novamente.")}
 };
 window.revokeAll=async function(){if(!confirm("Encerrar todas as sessões ativas dos coordenadores? Eles precisarão entrar novamente."))return;try{await api("revoke_all_coordinator_sessions");toast("Sessões encerradas.");await boot(true)}catch(x){toast(x.message)}}
-async function boot(silent){S.a=sessionStorage.getItem("ctl_a")||S.a;S.r=sessionStorage.getItem("ctl_r")||S.r;if(!S.a){login();return}try{S.data=await api("bootstrap");render()}catch(x){if(!silent){clr();login(x.message)}else toast(x.message)}}
+async function boot(silent){S.a=sessionStorage.getItem("ctl_a")||S.a;S.r=sessionStorage.getItem("ctl_r")||S.r;if(!S.a){login();return}try{S.data=await api("bootstrap");render();if(S.tab==="overview")refreshHealth(false)}catch(x){if(!silent){clr();login(x.message)}else toast(x.message)}}
 boot();
 </script></body></html>
