@@ -1,0 +1,21 @@
+﻿$ErrorActionPreference="Stop"
+$path="C:\Users\secre\Documents\Rod27-Monitor\Rod27-Heartbeat.ps1"
+$arg='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$path+'"'
+$action=New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
+$who=[Security.Principal.WindowsIdentity]::GetCurrent().Name
+$daily=New-ScheduledTaskTrigger -Daily -At "11:00"
+$logon=New-ScheduledTaskTrigger -AtLogOn -User $who
+$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew
+$principal=New-ScheduledTaskPrincipal -UserId $who -LogonType Interactive -RunLevel Limited
+$task=Register-ScheduledTask -TaskName "Rod27 - Atividade Supabase" -TaskPath "\" -Action $action -Trigger @($daily,$logon) -Principal $principal -Settings $settings -Description "3 consultas leves ao Postgres Rod27 todo dia as 11h e no login. Gera monitor local." -Force
+Write-Output ("TASK_REGISTERED="+$task.TaskName)
+Write-Output ("TASK_STATE="+$task.State)
+Write-Output ("USER="+$who)
+$desktop=[Environment]::GetFolderPath("Desktop")
+$shortcut=Join-Path $desktop "Rod27 - Monitor do Servidor.lnk"
+$w=New-Object -ComObject WScript.Shell
+$link=$w.CreateShortcut($shortcut)
+$link.TargetPath="C:\Users\secre\Documents\Rod27-Monitor\monitor.html"
+$link.Description="Abrir contador de atividade do Supabase Rod27"
+$link.Save()
+Write-Output ("SHORTCUT="+$shortcut)
