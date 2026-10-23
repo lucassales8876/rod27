@@ -2,7 +2,7 @@
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow,noarchive"><meta name="theme-color" content="#17223b">
-<title>Rod27 · Coordenador</title>
+<title>Acesso</title>
 <style>
 :root{--n:#17223b;--n2:#273a62;--p:#f5f2ec;--i:#182033;--m:#68707d;--l:#e4ded3;--g:#1f7a55;--a:#9a6418;--r:#a53d3d;--gold:#b7873f}
 *{box-sizing:border-box}body{margin:0;background:var(--p);color:var(--i);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}button,input,textarea{font:inherit}button{cursor:pointer}.shell{max-width:960px;margin:auto;min-height:100vh;padding-bottom:50px}
@@ -27,7 +27,8 @@ function toggleSenha(btn){
  btn.textContent=reveal?"Ocultar senha":"Mostrar senha";
  btn.setAttribute("aria-pressed",reveal?"true":"false");
 }
-function loginView(msg){app.innerHTML='<div class="login"><div class="ey">ROD27 · COORDENADOR</div><h2>Entrar no seu setor</h2><p class="muted">Use seu ROL de coordenador e a senha fornecida pela Secretaria.</p><div class="field"><label>ROL</label><input id="rol" inputmode="numeric" autocomplete="username" placeholder="Seu ROL"></div><div class="field"><label>Senha de acesso</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••••"><button type="button" data-password-ids="pin" aria-pressed="false" onclick="toggleSenha(this)" style="margin-top:8px;padding:6px 0;border:0;background:transparent;color:#273a62;font:inherit;font-size:13px;font-weight:700;cursor:pointer">Mostrar senha</button></div><div id="err" class="error">'+e(msg||"")+'</div><button class="btn primary" style="width:100%" onclick="login()">Entrar</button></div>'}
+function loginView(msg){app.innerHTML='<div class="login"><h2>Acesso</h2><div class="field"><label>Identificador</label><input id="rol" inputmode="numeric" autocomplete="username"></div><div class="field"><label>Senha de acesso</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••••"><button type="button" data-password-ids="pin" aria-pressed="false" onclick="toggleSenha(this)" style="margin-top:8px;padding:6px 0;border:0;background:transparent;color:#273a62;font:inherit;font-size:13px;font-weight:700;cursor:pointer">Mostrar senha</button></div><div id="err" class="error">'+e(msg||"")+'</div><button class="btn primary" style="width:100%" onclick="login()">Entrar</button><p style="text-align:center"><a href="#" onclick="recoverCoordinator();return false">Esqueci a senha</a></p></div>'}
+window.recoverCoordinator=function(){toast("Solicite a redefinição do acesso.");};
 window.login=async function(){var rol=document.getElementById("rol").value.trim(),senha=document.getElementById("pin").value.trim(),err=document.getElementById("err");err.textContent="Entrando…";try{var d=await post("login",{rol:rol,senha:senha},false);S.session=d.session_token;sessionStorage.setItem("rod27_session",S.session);await boot()}catch(x){err.textContent=x.message}}
 window.logout=async function(){try{if(S.session)await post("logout")}catch(x){}S.session=null;sessionStorage.removeItem("rod27_session");loginView()}
 function tag(c){if(c.eh_proprio_coordenador&&S.data&&!S.data.can_self_evaluate)return["Coordenação","special"];if(c.status==="enviada")return["Enviada","sent"];if(c.status==="em_preenchimento")return["Em andamento","draft"];return["Avaliar","new"]}

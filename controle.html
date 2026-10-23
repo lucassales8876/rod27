@@ -2,7 +2,7 @@
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow,noarchive"><meta name="theme-color" content="#111827">
-<title>Rod27 · Central de Controle</title>
+<title>Acesso</title>
 <style>
 :root{--bg:#f4f1ea;--ink:#182033;--muted:#69707c;--line:#e3ddd2;--dark:#111827;--dark2:#24314d;--green:#1f7a55;--amber:#9a6418;--red:#a53d3d;--purple:#654a8c}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}.shell{max-width:1180px;margin:auto;padding-bottom:50px}.hero{background:linear-gradient(145deg,var(--dark),var(--dark2));color:#fff;padding:27px 20px;border-radius:0 0 26px 26px}.ey{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#cfc0e6;font-weight:900}.hero h1{margin:4px 0}.hero p{margin:0;opacity:.8}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
@@ -16,7 +16,7 @@ main{padding:18px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:14px}.t
 <script>
 var U="https://zrjxxcytgtjuuinhkfux.supabase.co",K="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh",S={a:null,r:null,data:null,tab:"overview"},app=document.getElementById("app"),back=document.getElementById("back"),box=document.getElementById("modal");
 function e(v){return String(v==null?"":v).replace(/[&<>"']/g,function(x){return{"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[x]})}function toast(m){var x=document.getElementById("toast");x.textContent=m;x.classList.add("show");setTimeout(function(){x.classList.remove("show")},2200)}
-function ss(d){S.a=d.access_token;S.r=d.refresh_token;sessionStorage.setItem("ctl_a",S.a||"");sessionStorage.setItem("ctl_r",S.r||"")}function clr(){S.a=null;S.r=null;sessionStorage.removeItem("ctl_a");sessionStorage.removeItem("ctl_r")}
+function ss(d){S.a=d.access_token;S.r=d.refresh_token;sessionStorage.setItem("ctl_a",S.a||"");sessionStorage.setItem("ctl_r",S.r||"")}function clr(){AUDIT_AUTH.grant=null;S.a=null;S.r=null;sessionStorage.removeItem("ctl_a");sessionStorage.removeItem("ctl_r")}
 async function rf(){if(!S.r)return false;var x=await fetch(U+"/auth/v1/token?grant_type=refresh_token",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({refresh_token:S.r})});if(!x.ok){clr();return false}ss(await x.json());return true}
 async function api(action,p,retry){var x=await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-control",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+S.a},body:JSON.stringify(Object.assign({action:action},p||{}))});if((x.status===401||x.status===403)&&!retry&&await rf())return api(action,p,true);var j=await x.json().catch(function(){return{ok:false,error:"Resposta inválida."}});if(x.status===401||x.status===403){clr();back.classList.remove("show");login("Sua sessão expirou ou não está autorizada. Entre novamente.");throw new Error("Sessão expirada ou acesso não autorizado.")}if(!x.ok||!j.ok)throw new Error(j.error||"Falha.");return j}
 function toggleSenha(btn){
@@ -27,9 +27,15 @@ function toggleSenha(btn){
  btn.textContent=reveal?"Ocultar senha":"Mostrar senha";
  btn.setAttribute("aria-pressed",reveal?"true":"false");
 }
-function login(msg){app.innerHTML='<div class="login"><div class="ey">ROD27 · CONTROLE</div><h2>Superadministração</h2><p class="muted">Área de controle do sistema. Não é o painel operacional do Rodízio.</p><div class="field"><label>E-mail</label><input id="em" type="email"></div><div class="field"><label>Senha</label><input id="pw" type="password"><button type="button" data-password-ids="pw" aria-pressed="false" onclick="toggleSenha(this)" style="margin-top:8px;padding:6px 0;border:0;background:transparent;color:#273a62;font:inherit;font-size:13px;font-weight:700;cursor:pointer">Mostrar senha</button></div><div id="er" class="error">'+e(msg||"")+'</div><button class="btn primary" style="width:100%" onclick="doLogin()">Entrar</button></div>'}
+function login(msg){app.innerHTML='<div class="login"><h2>Acesso</h2><div class="field"><label>E-mail</label><input id="em" type="email"></div><div class="field"><label>Senha</label><input id="pw" type="password"><button type="button" data-password-ids="pw" aria-pressed="false" onclick="toggleSenha(this)" style="margin-top:8px;padding:6px 0;border:0;background:transparent;color:#273a62;font:inherit;font-size:13px;font-weight:700;cursor:pointer">Mostrar senha</button></div><div id="er" class="error">'+e(msg||"")+'</div><button class="btn primary" style="width:100%" onclick="doLogin()">Entrar</button><div style="margin-top:12px;text-align:center"><a href="#" onclick="recoverLogin();return false" style="font-size:13px;color:var(--muted)">Esqueci a senha</a></div></div>'}
+window.recoverLogin=async function(){
+ var email=document.getElementById("em")?.value.trim();
+ if(!email){toast("Informe o e-mail.");return}
+ try{await fetch(U+"/auth/v1/recover?redirect_to="+encodeURIComponent("https://rod27-ieadern.pages.dev/redefinir-senha"),{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:email})})}catch(_){}
+ toast("Se existir uma conta, as instruções de recuperação serão enviadas.");
+};
 window.doLogin=async function(){var er=document.getElementById("er");er.textContent="Entrando…";try{var x=await fetch(U+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("em").value.trim(),password:document.getElementById("pw").value})}),j=await x.json();if(!x.ok)throw new Error("E-mail ou senha inválidos.");ss(j);await boot()}catch(z){er.textContent=z.message}}
-window.logout=function(){clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
+window.logout=function(){AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
 function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],["admins","Contas e PINs"],["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
 window.setTab=function(t){S.tab=t;render();if(t==="admins")loadCoordinatorAccess()};
 function render(){var d=S.data;app.innerHTML='<section class="hero"><div class="top"><div><div class="ey">ROD27 · CENTRAL DE CONTROLE</div><h1>Controle do sistema</h1><p>'+e(d.admin.nome_exibicao||d.admin.email)+' · superadmin</p></div><div class="actions"><button class="btn ghost small" onclick="window.open(&quot;/secretaria&quot;,&quot;_blank&quot;)">Abrir painel do Rodízio</button><button class="btn ghost small" onclick="logout()">Sair</button></div></div></section><main>'+tabs()+'<div id="view">'+view()+'</div></main>'}
@@ -166,8 +172,28 @@ window.copyNewPin=async function(){
  if(!c)return;
  try{await navigator.clipboard.writeText("ROL: "+c.rol+"\nPIN: "+c.pin);toast("ROL e PIN copiados.")}catch(x){toast("Copie manualmente o PIN exibido.")}
 };
-function audit(d){return'<div class="card"><h3>Auditoria recente</h3><p class="muted">O histórico de alterações críticas é gravado pelo banco. Somente o Controle Superior pode remover um registro mediante identificação do solicitante e justificativa; a exclusão também fica registrada.</p></div>'+d.audit.map(function(a){return'<div class="audit"><strong>'+e(a.acao)+'</strong> · '+e(a.papel||"")+'<br><span class="muted">'+e(a.entidade||"")+' '+e(a.entidade_id||"")+' · '+e(new Date(a.criado_em).toLocaleString("pt-BR"))+'</span><div class="actions"><button class="btn danger small" onclick="openAuditRemoval(&quot;'+e(a.id)+'&quot;)">Remover registro</button></div></div>'}).join("")}
+var AUDIT_AUTH={grant:null};
+function audit(d){
+ var form='<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:9px;align-items:center"><input id="audit_joint_pass" aria-label="Autorização" type="password" autocomplete="off" style="width:min(360px,80%);border:1px solid var(--line);padding:11px;border-radius:10px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();authorizeAudit()}"><button type="button" class="btn ghost" aria-label="Confirmar" onclick="authorizeAudit()">✓</button></div></div>';
+ return form+d.audit.map(function(a){
+  return '<div class="audit"><strong>'+e(a.acao)+'</strong> · '+e(a.papel||"")+'<br><span class="muted">'+e(a.entidade||"")+' '+e(a.entidade_id||"")+' · '+e(new Date(a.criado_em).toLocaleString("pt-BR"))+'</span>'+
+   (AUDIT_AUTH.grant?'<div class="actions"><button class="btn danger small" onclick="openAuditRemoval(&quot;'+e(a.id)+'&quot;)">Remover registro</button></div>':"")+'</div>';
+ }).join("");
+}
+window.authorizeAudit=async function(){
+ var inp=document.getElementById("audit_joint_pass"),pw=inp?inp.value:"";
+ if(!pw)return;
+ try{
+  var result=await api("authorize_audit_removal",{password:pw});
+  AUDIT_AUTH.grant=result.grant;inp.value="";toast("Autorizado.");render();
+ }catch(err){
+  AUDIT_AUTH.grant=null;
+  if(inp)inp.value="";
+  toast("Autorização recusada.");
+ }
+};
 window.openAuditRemoval=function(id){
+ if(!AUDIT_AUTH.grant)return;
  box.innerHTML='<div class="ey">CONTROLE SUPERIOR · REGISTRO DE AUDITORIA</div><h2>Exclusão administrativa</h2><p class="muted">O conteúdo deste registro será excluído. Permanecerá o registro mínimo de que a exclusão foi autorizada, por quem foi solicitada e qual foi a justificativa. Esta ação não desfaz a operação original.</p><div class="field"><label>Quem determinou a exclusão?</label><input id="audit_requested_by" maxlength="160" placeholder="Autoridade solicitante"></div><div class="field"><label>Motivo e referência da determinação</label><textarea id="audit_reason" rows="4" maxlength="2000" placeholder="Registre a razão da exclusão"></textarea></div><div class="actions"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn danger" onclick="removeAuditEntry(&quot;'+e(id)+'&quot;)">Confirmar exclusão</button></div>';
  back.classList.add("show");
 };
@@ -175,8 +201,8 @@ window.removeAuditEntry=async function(id){
  var by=document.getElementById("audit_requested_by").value.trim(),why=document.getElementById("audit_reason").value.trim();
  if(by.length<3||why.length<12){toast("Informe o solicitante e o motivo da exclusão.");return}
  if(!confirm("Excluir este registro do histórico comum? A exclusão terá uma trilha administrativa própria."))return;
- try{await api("remove_audit_entry",{registro_id:id,solicitante:by,motivo:why});closeM();toast("Registro excluído. A exclusão foi auditada.");await boot(true)}
- catch(err){toast(err.message)}
+ try{await api("remove_audit_entry",{registro_id:id,solicitante:by,motivo:why,grant:AUDIT_AUTH.grant});closeM();toast("Registro excluído. A exclusão foi auditada.");await boot(true)}
+ catch(err){AUDIT_AUTH.grant=null;closeM();await boot(true);toast("Autorização inválida ou expirada. Valide novamente.")}
 };
 window.revokeAll=async function(){if(!confirm("Encerrar todas as sessões ativas dos coordenadores? Eles precisarão entrar novamente."))return;try{await api("revoke_all_coordinator_sessions");toast("Sessões encerradas.");await boot(true)}catch(x){toast(x.message)}}
 async function boot(silent){S.a=sessionStorage.getItem("ctl_a")||S.a;S.r=sessionStorage.getItem("ctl_r")||S.r;if(!S.a){login();return}try{S.data=await api("bootstrap");render()}catch(x){if(!silent){clr();login(x.message)}else toast(x.message)}}

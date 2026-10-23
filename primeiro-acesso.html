@@ -12,9 +12,7 @@ input{width:100%;padding:12px;border:1px solid #d2ccc2;border-radius:11px;font:i
 .msg{min-height:22px;margin-top:10px;font-size:13px}.err{color:var(--r)}.ok{color:var(--g)}a{color:var(--n);font-weight:700}
 </style></head><body>
 <div class="wrap"><div class="card">
-<div class="ey">ROD27 · PRIMEIRO ACESSO</div>
-<h1>Crie sua senha</h1>
-<p class="muted">Use o e-mail autorizado e o código temporário recebido. A senha será definida por você.</p>
+<h1>Acesso</h1>
 <label>E-mail</label><input id="email" type="email" autocomplete="email">
 <label>Código temporário</label><input id="code" autocomplete="one-time-code">
 <label>Nova senha</label><input id="pw" type="password" autocomplete="new-password">
@@ -45,7 +43,7 @@ async function go(){
       body:JSON.stringify({email:e,password:p,data:{rod27_admin_setup:true,rod27_admin_invite:c}})});
     var j=await r.json();
     if(!r.ok)throw new Error(j.msg||j.message||j.error_description||"Não foi possível criar o acesso.");
-    var login="index.html";
+    var login="secretaria.html";
     m.className="msg ok";m.innerHTML="Acesso criado com sucesso. <a href='"+login+"'>Entrar agora</a>";
     ["code","pw","pw2"].forEach(function(id){document.getElementById(id).value=""});
   }catch(x){m.className="msg err";m.textContent=x.message}

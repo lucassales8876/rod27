@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer"><title>Acesso</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f5f2ec;color:#17223b}
+*{box-sizing:border-box}body{margin:0}.card{background:white;max-width:430px;margin:11vh auto;padding:28px;border:1px solid #e4ded3;border-radius:23px;box-shadow:0 14px 40px #17223b10}
+h1{font-size:23px;margin:0 0 17px}label{display:block;font-size:13px;font-weight:700;margin:13px 0 6px}
+input{width:100%;border:1px solid #d6d0c6;border-radius:11px;padding:12px;font:inherit}button{cursor:pointer}#save{width:100%;padding:12px;color:white;background:#17223b;border:0;border-radius:11px;font-weight:700;margin-top:18px}.show{margin-top:8px;border:0;background:none;color:#273a62;font-weight:700;padding:6px 0}
+#msg{font-size:13px;margin-top:12px}
+</style></head><body><main class="card">
+<h1>Acesso</h1><label>Nova senha</label><input type="password" id="pw" autocomplete="new-password">
+<label>Confirmar senha</label><input type="password" id="pw2" autocomplete="new-password">
+<button class="show" type="button" onclick="toggle()">Mostrar senha</button>
+<button id="save" type="button" onclick="save()">Confirmar</button><div id="msg" aria-live="polite"></div>
+</main><script>
+const SUPABASE="https://zrjxxcytgtjuuinhkfux.supabase.co";
+const KEY="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh";
+const hash=new URLSearchParams(location.hash.slice(1));
+const token=hash.get("access_token");
+const typ=hash.get("type");
+history.replaceState(null,"",location.pathname);
+function toggle(){const a=document.getElementById("pw"),b=document.getElementById("pw2");const show=a.type==="password";a.type=b.type=show?"text":"password";document.querySelector(".show").textContent=show?"Ocultar senha":"Mostrar senha";}
+async function save(){
+ const m=document.getElementById("msg"),a=document.getElementById("pw"),b=document.getElementById("pw2");
+ if(!token||typ!=="recovery"){m.textContent="Link inválido ou expirado.";return}
+ if(a.value!==b.value){m.textContent="As senhas não coincidem.";return}
+ if(a.value.length<12){m.textContent="Use pelo menos 12 caracteres.";return}
+ document.getElementById("save").disabled=true;m.textContent="Validando...";
+ try{
+  const r=await fetch(SUPABASE+"/auth/v1/user",{method:"PUT",headers:{"apikey":KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({password:a.value})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw Error(j.msg||j.message||"Não foi possível concluir.");
+  a.value="";b.value="";m.textContent="Senha atualizada. Retorne à tela de acesso.";
+ }catch(err){m.textContent=err.message;document.getElementById("save").disabled=false}
+}
+</script></body></html>
