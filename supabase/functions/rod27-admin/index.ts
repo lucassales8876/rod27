@@ -29,7 +29,7 @@ async function map2026(ctx:any){
  if(se||ce||de||ye)throw se??ce??de??ye;
  if(!cycle)throw new Error("Base 2026 de coordenações indisponível.");
  const {data:coords,error:coerr}=await db.from("coordenacoes_setor")
-   .select("setor_id,obreiro_rol,coordenador_nome_snapshot,ano_base_designacao")
+   .select("id,setor_id,obreiro_rol,coordenador_nome_snapshot,ano_base_designacao")
    .eq("ciclo_id",cycle.id).eq("ano_base_designacao",2026);
  if(coerr)throw coerr;
  const {data:evaluations,error:evError}=await db.from("avaliacoes_dirigente")
@@ -54,7 +54,8 @@ async function map2026(ctx:any){
  for(const coord of coords??[]){
   const sec=perSector.get(coord.setor_id);
   const item=sec?byNumber.get(sec.numero):null;
-  if(item)item.coordenador={nome:coord.coordenador_nome_snapshot,rol:coord.obreiro_rol,
+  if(item)item.coordenador={id:coord.id,nome:coord.coordenador_nome_snapshot,rol:coord.obreiro_rol,
+    foto_url:(assignments??[]).find((x:any)=>x.obreiro_rol===coord.obreiro_rol)?.dirigente_foto_url_snapshot??null,
     fonte:"Coordenações do Rod27, ano-base 2026"};
  }
  const byChurch=new Map<string,any[]>();
@@ -104,6 +105,85 @@ async function map2026(ctx:any){
     sem_designacao:absent,conflitos:conflicts},
   areas
  };
+}
+async function coordinatorContext(setor:number,rol:string){
+ if(!Number.isInteger(setor)||setor<1||setor>42||!/^[0-9]{1,12}$/.test(rol))throw new Error("Identificação de coordenação inválida.");
+ const c=await cycle();
+ const {data:sector,error:sErr}=await db.from("setores").select("id,numero,area").eq("numero",setor).eq("ativo",true).single();
+ if(sErr||!sector)throw new Error("Setor não encontrado.");
+ const {data:coord,error:cErr}=await db.from("coordenacoes_setor")
+   .select("id,ciclo_id,obreiro_rol,coordenador_nome_snapshot,setor_id,ano_base_designacao")
+   .eq("setor_id",sector.id).eq("ciclo_id",c.id).eq("obreiro_rol",rol).maybeSingle();
+ if(cErr||!coord||coord.ano_base_designacao!==2026)throw new Error("Esta coordenação não corresponde à base de 2026.");
+ return{c,sector,coord};
+}
+async function coordinatorProfile(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const {c,sector,coord}=await coordinatorContext(Number(b.setor),String(b.rol??"").trim());
+ const [{data:people,error:pe},{data:manifest,error:me},{data:docs,error:de}]=await Promise.all([
+  db.rpc("rod27_obreiro_resumo",{p_rol:coord.obreiro_rol}),
+  db.from("manifestacoes_interesse_coordenador")
+   .select("status,deseja_permanecer,opcao_movimentacao,justificativa,criado_em,atualizado_em,enviada_em,congregacao_nome_snapshot")
+   .eq("ciclo_id",c.id).eq("coordenacao_id",coord.id)
+   .eq("coordenador_rol_snapshot",coord.obreiro_rol).maybeSingle(),
+  db.from("documentos_coordenador")
+   .select("id,nome_original,tipo_mime,tamanho_bytes,enviado_em,sha256")
+   .eq("coordenacao_id",coord.id).eq("ciclo_id",c.id)
+   .eq("obreiro_rol",coord.obreiro_rol).order("enviado_em",{ascending:false})
+ ]);
+ if(pe||me||de)throw pe??me??de;
+ return{ok:true,ano_base:2026,ciclo_manifestacao:2027,
+  coordenador:{id:coord.id,rol:coord.obreiro_rol,nome:people?.[0]?.nome??coord.coordenador_nome_snapshot,
+   foto_url:people?.[0]?.foto_url??null,setor:sector.numero,area:sector.area},
+  manifestacao:manifest??null,documentos:docs??[]};
+}
+async function coordinatorUpload(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const {c,coord}=await coordinatorContext(Number(b.setor),String(b.rol??"").trim());
+ const nome=String(b.nome??"").trim().replace(/[\r\n\t]/g," ").slice(0,160);
+ if(!nome)throw new Error("Informe o nome do documento.");
+ const mime=String(b.tipo_mime??"");
+ if(!["application/pdf","image/jpeg","image/png"].includes(mime))throw new Error("Envie PDF, JPG ou PNG.");
+ const encoded=String(b.base64??"");
+ if(!encoded||encoded.length>11185000||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))throw new Error("Arquivo inválido ou maior que 8 MB.");
+ const bin=atob(encoded),bytes=new Uint8Array(bin.length);
+ for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+ if(bytes.length===0||bytes.length>8388608)throw new Error("O documento deve ter no máximo 8 MB.");
+ const isPdf=bytes.length>4&&bytes[0]===37&&bytes[1]===80&&bytes[2]===68&&bytes[3]===70,
+  isJpeg=bytes.length>3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255,
+  isPng=bytes.length>8&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71;
+ if(!((mime==="application/pdf"&&isPdf)||(mime==="image/jpeg"&&isJpeg)||(mime==="image/png"&&isPng)))throw new Error("O conteúdo do arquivo não corresponde ao formato informado.");
+ const sha256=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(v=>v.toString(16).padStart(2,"0")).join("");
+ const ext=mime==="application/pdf"?"pdf":mime==="image/jpeg"?"jpg":"png";
+ const path="coordenador/"+c.id+"/"+coord.id+"/"+crypto.randomUUID()+"."+ext;
+ const {error:storageError}=await db.storage.from("rod27-documentos").upload(path,bytes,{contentType:mime,upsert:false,cacheControl:"private"});
+ if(storageError)throw storageError;
+ const{data:doc,error:insertError}=await db.from("documentos_coordenador").insert({
+  coordenacao_id:coord.id,ciclo_id:c.id,obreiro_rol:coord.obreiro_rol,
+  caminho_storage:path,nome_original:nome,tipo_mime:mime,tamanho_bytes:bytes.length,
+  sha256,enviado_por:ctx.user.id
+ }).select("id").single();
+ if(insertError||!doc){
+  await db.storage.from("rod27-documentos").remove([path]);
+  throw insertError??new Error("Falha ao registrar documento.");
+ }
+ await audit(ctx,"anexar_documento_coordenador","documentos_coordenador",doc.id,
+   {coordenacao_id:coord.id,ciclo_id:c.id,rol:coord.obreiro_rol,sha256,tamanho:bytes.length});
+ return{ok:true,documento_id:doc.id,sha256};
+}
+async function coordinatorDocumentUrl(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const {c,coord}=await coordinatorContext(Number(b.setor),String(b.rol??"").trim());
+ const id=String(b.documento_id??"");
+ if(!/^[a-f0-9-]{36}$/i.test(id))throw new Error("Documento inválido.");
+ const{data:doc,error}=await db.from("documentos_coordenador")
+  .select("id,caminho_storage").eq("id",id).eq("coordenacao_id",coord.id)
+  .eq("ciclo_id",c.id).eq("obreiro_rol",coord.obreiro_rol).maybeSingle();
+ if(error||!doc)throw new Error("Documento indisponível para esta coordenação.");
+ const {data, error:signedError}=await db.storage.from("rod27-documentos").createSignedUrl(doc.caminho_storage,300);
+ if(signedError||!data?.signedUrl)throw new Error("Não foi possível abrir o documento.");
+ await audit(ctx,"consultar_documento_coordenador","documentos_coordenador",id,{coordenacao_id:coord.id});
+ return{ok:true,url:data.signedUrl,expira_segundos:300};
 }
 async function bootstrap(ctx:any){const c=await cycle();const{data:selfSetting}=await db.from("configuracoes_sistema_runtime").select("valor").eq("chave","avaliacao.autoavaliacao.permitida").maybeSingle();const autoavaliacao_permitida=selfSetting?.valor?.permitida===true;const[{data:coords},{data:secs},{data:creds},{data:evals}]=await Promise.all([db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),db.from("setores").select("id,numero,area"),db.from("coordenador_credenciais").select("coordenacao_id,rol_login,status,ultimo_login_em"),db.from("avaliacoes_dirigente").select("coordenacao_id,status,eh_proprio_coordenador").eq("ciclo_id",c.id).eq("eh_proprio_coordenador",false)]);const sm=new Map((secs??[]).map((x:any)=>[x.id,x])),cm=new Map((creds??[]).map((x:any)=>[x.coordenacao_id,x])),em=new Map<string,any[]>();for(const x of evals??[]){const a=em.get(x.coordenacao_id)??[];a.push(x);em.set(x.coordenacao_id,a)}const rows=(coords??[]).map((x:any)=>{const s=sm.get(x.setor_id),cr=cm.get(x.id),ee=em.get(x.id)??[];return{setor:s.numero,area:s.area,coordenador:x.coordenador_nome_snapshot,rol:x.obreiro_rol,total:ee.length,tratamento_especial:0,nao_iniciadas:ee.filter(z=>z.status==="nao_iniciada").length,em_preenchimento:ee.filter(z=>z.status==="em_preenchimento").length,enviadas:ee.filter(z=>z.status==="enviada").length,credencial_status:cr?.status??"nao_configurada",ultimo_login_em:cr?.ultimo_login_em??null}}).sort((a,b)=>a.setor-b.setor);return{ok:true,autoavaliacao_permitida,admin:{email:ctx.user.email,papel:ctx.admin.papel,nome_exibicao:ctx.admin.nome_exibicao},summary:{setores:rows.length,total:rows.reduce((n,x)=>n+x.total,0),nao_iniciadas:rows.reduce((n,x)=>n+x.nao_iniciadas,0),em_preenchimento:rows.reduce((n,x)=>n+x.em_preenchimento,0),enviadas:rows.reduce((n,x)=>n+x.enviadas,0),credenciais_ativas:rows.filter(x=>x.credencial_status==="ativa").length},sectors:rows}}
 async function manifestations(ctx:any){if(!canOperate(ctx))throw new Error("Sem permissão.");const c=await cycle();const[{data:coords,error:cErr},{data:secs,error:sErr},{data:churches,error:gErr},{data:owners,error:oErr},{data:rows,error:mErr}]=await Promise.all([db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),db.from("setores").select("id,numero,area"),db.from("congregacoes").select("id,nome,setor"),db.from("avaliacoes_dirigente").select("coordenacao_id,congregacao_id,congregacao_nome_snapshot,dirigente_rol,dirigente_nome_snapshot").eq("ciclo_id",c.id).eq("eh_proprio_coordenador",true),db.from("manifestacoes_interesse_coordenador").select("id,coordenacao_id,coordenador_rol_snapshot,coordenador_nome_snapshot,setor_numero_snapshot,congregacao_nome_snapshot,deseja_permanecer,opcao_movimentacao,justificativa,status,criado_em,atualizado_em,enviada_em").eq("ciclo_id",c.id)]);if(cErr||sErr||gErr||oErr||mErr)throw cErr??sErr??gErr??oErr??mErr;const sm=new Map((secs??[]).map((x:any)=>[x.id,x])),gm=new Map((churches??[]).map((x:any)=>[x.id,x])),om=new Map((owners??[]).map((x:any)=>[x.coordenacao_id,x])),mm=new Map((rows??[]).map((x:any)=>[x.coordenacao_id,x]));const list=(coords??[]).map((x:any)=>{const sec=sm.get(x.setor_id),own=om.get(x.id),church=gm.get(own?.congregacao_id),m=mm.get(x.id);if(!sec||!own||!church||own.dirigente_rol!==x.obreiro_rol||own.dirigente_nome_snapshot!==x.coordenador_nome_snapshot||own.congregacao_nome_snapshot!==church.nome||church.setor!==sec.numero)throw new Error("Identificação de coordenação ou setor inconsistente.");return{id:m?.id??null,status:m?.status??"pendente",coordenador_rol_snapshot:x.obreiro_rol,coordenador_nome_snapshot:x.coordenador_nome_snapshot,setor_numero_snapshot:sec.numero,area:sec.area,congregacao_id:own.congregacao_id,congregacao_nome_snapshot:own.congregacao_nome_snapshot,deseja_permanecer:m?.deseja_permanecer??null,opcao_movimentacao:m?.opcao_movimentacao??null,justificativa:m?.justificativa??null,criado_em:m?.criado_em??null,atualizado_em:m?.atualizado_em??null,enviada_em:m?.enviada_em??null}}).sort((a,b)=>a.setor_numero_snapshot-b.setor_numero_snapshot);return{ok:true,manifestations:list}}async function sector(n:number){const x=await sectorContext(n);const{data:e,error}=await db.from("avaliacoes_dirigente").select("id,congregacao_nome_snapshot,dirigente_nome_snapshot,dirigente_foto_url_snapshot,status,eh_proprio_coordenador,iniciada_em,enviada_em").eq("ciclo_id",x.c.id).eq("coordenacao_id",x.coord.id).eq("eh_proprio_coordenador",false).order("congregacao_nome_snapshot");if(error)throw error;return{ok:true,setor:x.s.numero,area:x.s.area,coordenador:x.coord.coordenador_nome_snapshot,evaluations:e??[]}}
@@ -291,5 +371,5 @@ async function officeSaveTranscription(ctx:any,b:any){
  if(error)throw error;
  return{ok:true,resultado:data?.[0]};
 }
-async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
+async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"coordinator_profile":return json(await coordinatorProfile(ctx,b));case"coordinator_document_upload":return json(await coordinatorUpload(ctx,b));case"coordinator_document_url":return json(await coordinatorDocumentUrl(ctx,b));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE_HTML,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});

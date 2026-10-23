@@ -24,7 +24,7 @@ function expanded(id){
 }
 function row(id,label,detail,kind,tag,children,canOpen,photoUrl){
  const active=S.mapSelected===id;
- const selected='<button type="button" class="rmap-select" aria-current="'+(active?"true":"false")+'" onclick="mapPick(&quot;'+esc(id)+'&quot;)"><span class="rmap-label">'+(kind==="person"?photo(photoUrl,label,false):"")+'<span><span class="rmap-main">'+esc(label)+'</span>'+
+ const selected='<button type="button" class="rmap-select" aria-current="'+(active?"true":"false")+'" onclick="mapPick(&quot;'+esc(id)+'&quot;)"><span class="rmap-label">'+((kind==="person"||kind==="coord")?photo(photoUrl,label,false):"")+'<span><span class="rmap-main">'+esc(label)+'</span>'+
  (detail?'<span class="rmap-sub">'+esc(detail)+'</span>':'')+'</span></span></button>';
  const right=canOpen?'<button type="button" class="rmap-arrow" aria-label="'+(expanded(id)?"Recolher":"Expandir")+' '+esc(label)+'" aria-expanded="'+expanded(id)+'" onclick="mapToggle(&quot;'+esc(id)+'&quot;)">'+(expanded(id)?"−":"+")+'</button>':'';
  return '<div class="rmap-item rmap-'+kind+'"><div class="rmap-line">'+selected+
@@ -62,7 +62,7 @@ function mapTree(){
    let coordinator=row(key("k",sector.numero),
     sector.coordenador?.nome||"Coordenador não identificado",
     sector.coordenador?.rol?"ROL "+sector.coordenador.rol:"Dados não informados",
-    "coord","",churches,true);
+    "coord","",churches,true,sector.coordenador?.foto_url);
    sectors+=row(key("s",sector.numero),"Setor "+sector.numero,
     sector.congregacoes.length+" congregações","sector","",coordinator,true);
   }
@@ -90,6 +90,70 @@ function matchSelection(){
  return{type:"root",value:d};
 }
 function field(label,value){return'<div class="rmap-field"><span>'+esc(label)+'</span><strong>'+esc(value==null?"Não informado":value)+'</strong></div>';}
+function coordinatorPanel(x,sector){
+ const id=S.mapSelected;
+ const state=profileCache.get(id);
+ const person=state?.profile?.coordenador||{};
+ const name=person.nome||x.nome||"Coordenador não informado";
+ const own=sector.congregacoes.find(c=>String(c.dirigente?.rol??"")===String(x.rol??""));
+ let html='<div class="rmap-profilehead">'+photo(person.foto_url||x.foto_url,name,true)+
+ '<div><div class="ey" style="color:var(--gold)">FICHA DO COORDENADOR</div><h2>'+esc(name)+'</h2>'+
+ '<div class="rmap-note">ROL '+esc(x.rol||"Não informado")+'</div>'+
+ '<span class="rmap-pill">Coordenação · ano-base 2026</span></div></div>'+
+ '<div class="rmap-profile-grid">'+field("Função","Coordenador de setor")+
+ field("Setor",sector.numero)+field("Área",sector.area)+
+ field("Congregações do setor",sector.congregacoes.length)+
+ field("Congregação que dirige",own?.nome||"Não identificada")+
+ field("Ciclo de manifestação","2027")+'</div>';
+ html+='<section class="rmap-panel-section"><div class="rmap-section-title"><h3>Manifestação de interesse</h3>'+
+ (state?.profile?.manifestacao?'<span class="rmap-pill">'+esc(statusLabel(state.profile.manifestacao.status))+'</span>':'')+'</div>';
+ if(state?.loading){
+  html+='<p class="rmap-empty">Consultando a manifestação...</p>';
+ }else if(state?.error){
+  html+='<p class="rmap-empty">Não foi possível consultar a ficha: '+esc(state.error)+'</p>';
+ }else if(!state?.profile?.manifestacao){
+  html+='<p class="rmap-empty">O coordenador ainda não registrou uma manifestação de interesse para 2027.</p>';
+ }else{
+  const mf=state.profile.manifestacao;
+  const choices={mesma_congregacao:"Permanecer na mesma congregação",outra_congregacao_mesmo_setor:"Outra congregação do mesmo setor",congregacao_outro_setor:"Congregação de outro setor"};
+  html+='<div class="rmap-profile-grid">'+field("Situação",mf.status==="enviada"?"Enviada": "Rascunho")+
+   field("Deseja permanecer?",mf.deseja_permanecer===true?"Sim":mf.deseja_permanecer===false?"Não":"Não informado")+
+   field("Preferência de movimentação",choices[mf.opcao_movimentacao]||"Não informada")+
+   field("Data de envio",mf.enviada_em?new Date(mf.enviada_em).toLocaleString("pt-BR"):"Ainda não enviada")+'</div>'+
+   (mf.justificativa?'<div class="rmap-review"><strong>Justificativa apresentada</strong><p>'+esc(mf.justificativa)+'</p></div>':'');
+ }
+ html+='</section><section class="rmap-panel-section"><div class="rmap-section-title"><h3>Documentos do coordenador</h3>'+
+ '<span class="rmap-pill">Arquivo privado</span></div>';
+ if(state?.loading){
+  html+='<p class="rmap-empty">Consultando documentos...</p>';
+ }else if(state?.error){
+  html+='<p class="rmap-empty">Os anexos estão indisponíveis enquanto a ficha não puder ser consultada.</p>';
+ }else{
+  const docs=state?.profile?.documentos||[];
+  html+=docs.length?docs.map(doc=>
+   '<div class="rmap-document"><div><strong>'+esc(doc.nome_original)+'</strong>'+
+   '<span class="rmap-sub">'+esc(doc.tipo_mime||"Documento")+' · '+esc(doc.enviado_em?new Date(doc.enviado_em).toLocaleDateString("pt-BR"):"Data não informada")+'</span></div>'+
+   '<button type="button" class="btn ghost small" onclick="mapOpenCoordinatorDoc(&quot;'+esc(doc.id)+'&quot;)">Visualizar</button></div>').join(""):
+   '<p class="rmap-empty">Ainda não há documentos anexados à ficha deste coordenador.</p>';
+  html+='<div class="rmap-upload"><label for="rmap-coord-upload"><strong>Anexar PDF ou formulário digitalizado</strong>'+
+   '<span class="rmap-sub">PDF, JPG ou PNG. Tamanho máximo: 8 MB.</span></label>'+
+   '<input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" id="rmap-coord-upload" aria-label="Documento do coordenador">'+
+   '<button type="button" class="btn primary small" '+(state?.uploading?"disabled":"")+' onclick="mapUploadCoordinatorDoc()">'+
+   (state?.uploading?"Enviando...":"Anexar documento")+'</button></div>';
+ }
+ if(state?.preview){
+  const url=safeUrl(state.preview.url);
+  if(url)html+='<div class="rmap-document-preview"><div class="rmap-section-title"><strong>'+esc(state.preview.name||"Documento")+'</strong>'+
+    '<button class="btn ghost small" type="button" onclick="mapClosePreview()">Fechar visualização</button></div>'+
+    (state.preview.mime==="application/pdf"?'<iframe src="'+esc(url)+'" title="Documento do coordenador" referrerpolicy="no-referrer" loading="lazy"></iframe>':
+    state.preview.mime?.startsWith("image/")?'<img src="'+esc(url)+'" alt="Documento anexado">':'')+
+    '<a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" class="rmap-sub">Abrir em outra aba</a>'+
+    '<p class="rmap-note">Acesso temporário de cinco minutos. A consulta fica registrada na auditoria.</p></div>';
+ }
+ html+='</section>';
+ if(!state?.loading)html+='<div class="rmap-panel-actions"><button type="button" class="btn ghost small" onclick="mapReloadCoordinator()">Atualizar ficha</button></div>';
+ return html;
+}
 function directorPanel(x,church,sector){
  const id=S.mapSelected;
  const state=profileCache.get(id);
@@ -167,6 +231,10 @@ function details(){
   return '<aside class="rmap-details rmap-details-expanded">'+
     directorPanel(x,church,sector)+'</aside>';
  }
+ if(obj.type==="coordinator"){
+  return '<aside class="rmap-details rmap-details-expanded">'+
+    coordinatorPanel(x,sector)+'</aside>';
+ }
  let name="",rows="",hint="",actions="";
  if(obj.type==="root"){
   name="Estrutura de 2026";
@@ -205,7 +273,7 @@ function mapContent(){
  const stats='<div class="rmap-kpis"><span>'+esc(t.areas)+' áreas</span><span>'+esc(t.setores)+' setores</span><span>'+esc(t.congregacoes)+' congregações</span><span>'+esc(t.coordenadores)+' coordenadores cadastrados</span>'+
  (t.conflitos?'<span style="color:#a53d3d">'+esc(t.conflitos)+' conflitos</span>':'')+'</div>';
  return'<div style="margin-bottom:12px">'+stats+'</div>'+
- '<div class="rmap-work'+(S.mapSelected.startsWith("d:")?" rmap-focused":"")+'"><section class="rmap-tree" aria-label="Árvore do rodízio de 2026">'+mapTree()+'</section>'+details()+'</div>';
+ '<div class="rmap-work'+((S.mapSelected.startsWith("d:")||S.mapSelected.startsWith("k:"))?" rmap-focused":"")+'"><section class="rmap-tree" aria-label="Árvore do rodízio de 2026">'+mapTree()+'</section>'+details()+'</div>';
 }
 window.mapMarkup=function(){
  return'<main class="rmap"><div class="rmap-top"><div><h2>Estrutura cadastrada em 2026</h2><p class="rmap-note">Área → Setor → Coordenador → Congregação → Dirigente</p></div>'+
@@ -244,6 +312,7 @@ window.mapToggle=function(id){S.mapExpanded[id]=!expanded(id);repaint();};
 window.mapPick=function(id){
  S.mapSelected=id;repaint();
  if(id.startsWith("d:"))loadDirector(id,false);
+ if(id.startsWith("k:"))loadCoordinator(id,false);
 };
 window.mapSearch=function(value){S.mapQuery=value;S.mapSelected="root";repaint();};
 async function loadDirector(id,force){
@@ -290,6 +359,65 @@ window.mapOpenDocument=async function(docId){
   state.preview={url,name:doc.nome_original,mime:doc.tipo_mime};
   repaint();
  }catch(err){if(typeof toast==="function")toast(err.message||"Não foi possível abrir o documento.");}
+};
+async function loadCoordinator(id,force){
+ const selected=matchSelection();
+ if(id!==S.mapSelected||selected?.type!=="coordinator"||!selected.value?.rol)return;
+ if(profileCache.has(id)&&!force)return;
+ const version=++fetchVersion;
+ const state={loading:true,profile:null,error:null,preview:null,uploading:false};
+ profileCache.set(id,state);repaint();
+ try{
+  const result=await api("coordinator_profile",{setor:selected.sector.numero,rol:String(selected.value.rol)});
+  if(version!==fetchVersion||id!==S.mapSelected)return;
+  state.profile=result;
+ }catch(err){
+  if(version!==fetchVersion||id!==S.mapSelected)return;
+  state.error=err.message||"Consulta indisponível";
+ }finally{
+  if(version===fetchVersion&&id===S.mapSelected){state.loading=false;repaint();}
+ }
+}
+window.mapReloadCoordinator=function(){
+ if(S.mapSelected.startsWith("k:"))loadCoordinator(S.mapSelected,true);
+};
+window.mapOpenCoordinatorDoc=async function(docId){
+ const id=S.mapSelected,state=profileCache.get(id),selected=matchSelection();
+ if(!state?.profile||selected?.type!=="coordinator")return;
+ const doc=state.profile.documentos?.find(z=>String(z.id)===String(docId));
+ if(!doc)return;
+ try{
+  const result=await api("coordinator_document_url",{
+   setor:selected.sector.numero,rol:String(selected.value.rol),documento_id:docId
+  });
+  if(id!==S.mapSelected)return;
+  const url=safeUrl(result.url);
+  if(!url)throw new Error("Link temporário inválido.");
+  state.preview={url,name:doc.nome_original,mime:doc.tipo_mime};
+  repaint();
+ }catch(err){if(typeof toast==="function")toast(err.message||"Não foi possível abrir o documento.");}
+};
+window.mapUploadCoordinatorDoc=async function(){
+ const id=S.mapSelected,state=profileCache.get(id),selected=matchSelection();
+ if(!state?.profile||state.uploading||selected?.type!=="coordinator")return;
+ const input=document.getElementById("rmap-coord-upload");
+ const file=input?.files?.[0];
+ if(!file){if(typeof toast==="function")toast("Selecione um arquivo.");return;}
+ const allowed=["application/pdf","image/jpeg","image/png"];
+ if(!allowed.includes(file.type)||file.size<=0||file.size>8388608){
+  if(typeof toast==="function")toast("Escolha PDF, JPG ou PNG de até 8 MB.");return;
+ }
+ try{
+  state.uploading=true;
+  const bytes=new Uint8Array(await file.arrayBuffer()),chunks=[];
+  for(let i=0;i<bytes.length;i+=32768)chunks.push(String.fromCharCode(...bytes.subarray(i,i+32768)));
+  await api("coordinator_document_upload",{setor:selected.sector.numero,rol:String(selected.value.rol),
+   nome:file.name,tipo_mime:file.type,base64:btoa(chunks.join(""))});
+  if(id!==S.mapSelected)return;
+  if(typeof toast==="function")toast("Documento anexado à ficha.");
+  await loadCoordinator(id,true);
+ }catch(err){if(typeof toast==="function")toast(err.message||"Não foi possível anexar o documento.");}
+ finally{state.uploading=false;if(id===S.mapSelected)repaint();}
 };
 window.mapExpandAll=function(){
  if(!S.mapData)return;
