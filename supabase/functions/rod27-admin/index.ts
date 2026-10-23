@@ -16,6 +16,61 @@ function canOperate(ctx:any){return ctx.admin.papel==="superadmin"||ctx.admin.pa
 async function audit(ctx:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:ctx.user.id,papel:ctx.admin.papel,acao,entidade,entidade_id:id,detalhes})}
 async function cycle(){const{data,error}=await db.from("ciclos_rodizio").select("id,ano,ano_base,nome,status").eq("ano",2027).single();if(error)throw error;return data}
 async function sectorContext(n:number){const c=await cycle();const{data:s}=await db.from("setores").select("id,numero,area").eq("numero",n).single();const{data:coord}=await db.from("coordenacoes_setor").select("id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id).eq("setor_id",s.id).single();const{data:cred}=await db.from("coordenador_credenciais").select("id,rol_login,status,ultimo_login_em,bloqueado_ate").eq("coordenacao_id",coord.id).single();return{c,s,coord,cred}}
+async function planningSnapshot(ctx:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const c=await cycle();
+ const [{data:state,error:stateErr},{data:slots,error:slotErr},{data:history,error:historyErr}]=await Promise.all([
+  db.from("rod27_planejamento").select("ciclo_id,ano,status,revisao,atualizado_em").eq("ciclo_id",c.id).single(),
+  db.from("rod27_planejamento_posicoes").select("id,tipo,destino_id,obreiro_rol,nome_snapshot,foto_url_snapshot").eq("ciclo_id",c.id),
+  db.from("rod27_planejamento_eventos").select("id,revisao,tipo,acao,autor,antes,depois,observacao,criado_em")
+   .eq("ciclo_id",c.id).order("revisao",{ascending:false}).limit(30)
+ ]);
+ if(stateErr||slotErr||historyErr)throw stateErr??slotErr??historyErr;
+ const actors=[...new Set((history??[]).map((x:any)=>x.autor))];
+ let names=new Map<string,string>();
+ if(actors.length){
+  const {data:users,error:userErr}=await db.from("usuarios_admin").select("user_id,nome_exibicao").in("user_id",actors);
+  if(!userErr)names=new Map((users??[]).map((u:any)=>[u.user_id,u.nome_exibicao]));
+ }
+ return{ok:true,ano:2027,planejamento:state,slots:slots??[],
+  historico:(history??[]).map((row:any)=>({...row,autor_nome:names.get(row.autor)??"Secretaria"})),
+  somente_proposta:true};
+}
+async function planningMove(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const p={
+  p_destino:String(b.destino_id??""),p_rol:String(b.rol??"").trim(),
+  p_tipo:String(b.tipo??""),p_revisao:Number(b.revisao),p_autor:ctx.user.id
+ };
+ if(!/^[a-f0-9-]{36}$/i.test(p.p_destino)||!/^[0-9]{1,12}$/.test(p.p_rol)||
+  !["coordenador","dirigente"].includes(p.p_tipo)||!Number.isInteger(p.p_revisao))
+  throw new Error("Movimentação inválida.");
+ const{data,error}=await db.rpc("rod27_planejamento_mover",p);
+ if(error)throw error;
+ await audit(ctx,"planejamento_2027_movimentar","rod27_planejamento",String(data?.revisao),{
+  tipo:p.p_tipo,destino_id:p.p_destino,rol:p.p_rol,troca:data?.troca===true});
+ return data;
+}
+async function planningUndo(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const rev=Number(b.revisao);
+ if(!Number.isInteger(rev)||rev<1)throw new Error("Revisão inválida.");
+ const{data,error}=await db.rpc("rod27_planejamento_desfazer",{p_revisao:rev,p_autor:ctx.user.id});
+ if(error)throw error;
+ await audit(ctx,"planejamento_2027_desfazer","rod27_planejamento",String(data?.revisao),{desfeita:data?.revisao_desfeita});
+ return data;
+}
+async function planningFind(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const term=String(b.busca??"").trim();
+ if(term.length<2||term.length>70)throw new Error("Informe pelo menos dois caracteres.");
+ let query=db.schema("private").from("obreiros").select("rol,nome,foto_url").order("nome").limit(20);
+ if(/^[0-9]+$/.test(term))query=query.ilike("rol",term+"%");
+ else query=query.ilike("nome","%"+term.replace(/[%_]/g,"")+"%");
+ const{data,error}=await query;
+ if(error)throw error;
+ return{ok:true,pessoas:data??[]};
+}
 async function map2026(ctx:any){
  if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
  const [{data:sectors,error:se},{data:churches,error:ce},{data:assignments,error:de},
@@ -371,5 +426,5 @@ async function officeSaveTranscription(ctx:any,b:any){
  if(error)throw error;
  return{ok:true,resultado:data?.[0]};
 }
-async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"coordinator_profile":return json(await coordinatorProfile(ctx,b));case"coordinator_document_upload":return json(await coordinatorUpload(ctx,b));case"coordinator_document_url":return json(await coordinatorDocumentUrl(ctx,b));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
+async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"planning_snapshot":return json(await planningSnapshot(ctx));case"planning_move":return json(await planningMove(ctx,b));case"planning_undo":return json(await planningUndo(ctx,b));case"planning_find":return json(await planningFind(ctx,b));case"coordinator_profile":return json(await coordinatorProfile(ctx,b));case"coordinator_document_upload":return json(await coordinatorUpload(ctx,b));case"coordinator_document_url":return json(await coordinatorDocumentUrl(ctx,b));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE_HTML,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});
