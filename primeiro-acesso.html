@@ -19,11 +19,20 @@ input{width:100%;padding:12px;border:1px solid #d2ccc2;border-radius:11px;font:i
 <label>Código temporário</label><input id="code" autocomplete="one-time-code">
 <label>Nova senha</label><input id="pw" type="password" autocomplete="new-password">
 <label>Confirme a senha</label><input id="pw2" type="password" autocomplete="new-password">
+<button type="button" data-password-ids="pw,pw2" aria-pressed="false" onclick="toggleSenha(this)" style="margin-top:8px;padding:6px 0;border:0;background:transparent;color:#273a62;font:inherit;font-size:13px;font-weight:700;cursor:pointer">Mostrar senha</button>
 <button class="btn" onclick="go()">Criar acesso</button>
 <div id="msg" class="msg"></div>
 </div></div>
 <script>
 var U="https://zrjxxcytgtjuuinhkfux.supabase.co",K="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh";
+function toggleSenha(btn){
+ var fields=(btn.getAttribute("data-password-ids")||"").split(",").map(function(id){return document.getElementById(id)}).filter(Boolean);
+ if(!fields.length)return;
+ var reveal=fields[0].type==="password";
+ fields.forEach(function(input){input.type=reveal?"text":"password"});
+ btn.textContent=reveal?"Ocultar senha":"Mostrar senha";
+ btn.setAttribute("aria-pressed",reveal?"true":"false");
+}
 async function go(){
   var m=document.getElementById("msg"),e=document.getElementById("email").value.trim(),
       c=document.getElementById("code").value.trim(),p=document.getElementById("pw").value,
