@@ -100,7 +100,7 @@ async function settingNumber(key: string, fallback: number) {
 async function contextFromCredential(credential: any) {
   const { data: coord, error: cErr } = await db
     .from("coordenacoes_setor")
-    .select("id,ciclo_id,setor_id,obreiro_rol,coordenador_nome_snapshot")
+    .select("id,ciclo_id,setor_id,obreiro_rol,coordenador_nome_snapshot,source")
     .eq("id", credential.coordenacao_id)
     .maybeSingle();
   if (cErr || !coord) return null;
@@ -268,7 +268,7 @@ const MANIFEST_OPTIONS = new Set([
   "congregacao_outro_setor",
 ]);
 async function coordinatorAssignment(ctx: any) {
-  if (ctx.ciclo?.ano !== 2027) throw new Error("Manifestação disponível apenas para o Rodízio 2027.");
+  if (ctx.ciclo?.ano !== 2027 && !(ctx.ciclo?.status === "homologacao" && ctx.coord.source === "homologacao")) throw new Error("Manifestação indisponível neste ciclo.");
   const { data: own, error } = await db.from("avaliacoes_dirigente")
     .select("dirigente_rol,dirigente_nome_snapshot,congregacao_id,congregacao_nome_snapshot")
     .eq("ciclo_id", ctx.coord.ciclo_id).eq("coordenacao_id", ctx.coord.id)
