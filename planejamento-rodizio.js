@@ -2,7 +2,7 @@
 "use strict";
 // Planejamento de 2027 é uma proposta isolada. Nunca grava nas designações de 2026.
 const h=v=>window.e(v);
-const planState=()=>{if(!S.plan)S.plan={data:null,busy:false,error:null,selected:null,expanded:{root:true},query:"",findTerm:"",findResults:[],finding:false,findError:null,chosen:null,saving:false};return S.plan;};
+const planState=()=>{if(!S.plan)S.plan={data:null,busy:false,error:null,selected:null,expanded:{root:true},query:"",findTerm:"",findResults:[],finding:false,findError:null,chosen:null,armed:null,saving:false};return S.plan;};
 const id=(tipo,destino)=>tipo+":"+destino;
 const entries=()=>new Map((planState().data?.slots||[]).map(x=>[id(x.tipo,x.destino_id),x]));
 const findSlot=(tipo,destino)=>entries().get(id(tipo,destino));
@@ -20,12 +20,13 @@ function branch(k,label,sub,body,person,kind){
  const tag=isSlot?'<span class="rmap-pill">'+(kind==="coordenador"?"Coordenador":"Dirigente")+'</span>':"";
  const personLine=isSlot?img(person?.foto_url_snapshot,person?.nome_snapshot)+"<span class='rplan-person'><strong>"+h(person?.nome_snapshot||"Vaga sem indicação")+"</strong><small>"+h(person?.obreiro_rol?"ROL "+person.obreiro_rol:"Sem ROL")+"</small></span>":'<span class="rplan-person"><strong>'+h(label)+'</strong><small>'+h(sub||"")+'</small></span>';
  const handler=isSlot?' ondragover="planAllowDrop(event,&quot;'+h(kind)+'&quot;)" ondrop="planDrop(event,&quot;'+h(kind)+'&quot;,&quot;'+h(person?.destino_id||'')+'&quot;)"':'';
+ const grab=canDrag?'<button type="button" draggable="true" class="rplan-grab" aria-label="Arrastar '+h(person.nome_snapshot)+'" title="Arraste para outro destino ou clique para escolher destino" ondragstart="planDrag(event,&quot;'+h(kind)+'&quot;,&quot;'+h(person.obreiro_rol)+'&quot;)" onclick="planArm(&quot;'+h(kind)+'&quot;,&quot;'+h(person.obreiro_rol)+'&quot;)">⇅</button>':"";
  const button='<button class="rplan-entry'+(active?" rplan-active":"")+'" type="button"'+
-  (canDrag?' draggable="true" ondragstart="planDrag(event,&quot;'+h(kind)+'&quot;,&quot;'+h(person.obreiro_rol)+'&quot;)"':'')+
+  ''+
   (isSlot?' onclick="planPick(&quot;'+h(k)+'&quot;)"':' onclick="planToggle(&quot;'+h(k)+'&quot;)"')+
-  handler+'>'+personLine+tag+'</button>';
+  '>'+personLine+tag+'</button>';
  return '<div class="rplan-node">'+
-  '<div class="rplan-line">'+button+(body?'<button class="rmap-arrow" type="button" aria-label="'+(open?"Recolher ":"Expandir ")+h(label)+'" aria-expanded="'+open+'" onclick="planToggle(&quot;'+h(k)+'&quot;)">'+(open?"−":"+")+'</button>':"")+'</div>'+
+  '<div class="rplan-line"'+handler+'>'+grab+button+(body?'<button class="rmap-arrow" type="button" aria-label="'+(open?"Recolher ":"Expandir ")+h(label)+'" aria-expanded="'+open+'" onclick="planToggle(&quot;'+h(k)+'&quot;)">'+(open?"−":"+")+'</button>':"")+'</div>'+
   (body&&open?'<div class="rmap-nest">'+body+'</div>':"")+'</div>';
 }
 function tree(){
@@ -56,6 +57,8 @@ function detail(){
   '<div><div class="ey">DESTINO SELECIONADO</div><h2>'+h(slot.nome_snapshot||"Vaga sem indicação")+'</h2><p class="rmap-note">'+h(slot.obreiro_rol?"ROL "+slot.obreiro_rol:"Vaga sem obreiro")+'</p></div></div>'+
   '<div class="rmap-profile-grid"><div class="rmap-field"><span>Função planejada</span><strong>'+h(slot.tipo==="coordenador"?"Coordenador de setor":"Dirigente de congregação")+'</strong></div>'+
   '<div class="rmap-field"><span>Situação</span><strong>Proposta 2027 · Revisão '+h(p.data.planejamento.revisao)+'</strong></div></div>'+
+  (slot.obreiro_rol?'<div class="rmap-panel-actions"><button class="btn ghost small" type="button" onclick="planArm(&quot;'+h(slot.tipo)+'&quot;,&quot;'+h(slot.obreiro_rol)+'&quot;)">Mover este obreiro para outro destino</button></div>':'')+
+  (p.armed?'<div class="rmap-banner">Movimentação selecionada: ROL '+h(p.armed.rol)+' · '+h(p.armed.tipo)+'. Clique no destino desejado, ou cancele. <button class="btn ghost small" type="button" onclick="planCancelArm()">Cancelar</button></div>':'')+
   '<section class="rmap-panel-section"><h3>Selecionar obreiro para esta posição</h3><p class="rmap-note">Pesquise pelo nome ou ROL. Uma pessoa que já ocupe outra posição da mesma função será trocada automaticamente com o ocupante atual.</p>'+
   '<div class="rplan-search"><input id="rplan-find" type="search" aria-label="Buscar obreiro por nome ou ROL" placeholder="Nome ou ROL (mínimo 2 caracteres)" value="'+h(p.findTerm)+'" oninput="planFindTerm(this.value)" onkeydown="if(event.key===&quot;Enter&quot;){event.preventDefault();planFind()}">'+
   '<button class="btn ghost small" type="button" onclick="planFind()" '+(p.finding?"disabled":"")+'>Buscar</button></div>'+
@@ -116,7 +119,19 @@ window.planningFetch=async function(force){
  }catch(err){p.error=err.message||"Falha ao consultar o planejamento.";}
  finally{p.busy=false;if(S.view==="map"&&S.mapYear==="2027")render();}
 };
-window.planPick=function(k){const p=planState();if(!entries().has(k))return;p.selected=k;p.chosen=null;p.findResults=[];p.findError=null;p.findTerm="";repaint();};
+window.planArm=function(tipo,rol){
+ const p=planState();p.armed={tipo,rol};toast("Selecione o destino no mapa.");repaint();
+};
+window.planCancelArm=function(){planState().armed=null;repaint();};
+window.planPick=function(k){
+ const p=planState(),slot=entries().get(k);if(!slot)return;
+ p.selected=k;p.chosen=null;p.findResults=[];p.findError=null;p.findTerm="";
+ const armed=p.armed;
+ if(armed&&armed.tipo===slot.tipo){
+  p.armed=null;repaint();move(armed.rol);return;
+ }
+ repaint();
+};
 window.planToggle=function(k){const p=planState();p.expanded[k]=!p.expanded[k];repaint();};
 window.planQuery=function(q){planState().query=q;repaint();};
 window.planExpandAll=function(){
@@ -169,10 +184,10 @@ window.planDrag=function(ev,tipo,rol){
 };
 window.planAllowDrop=function(ev,tipo){if(["coordenador","dirigente"].includes(tipo)){ev.preventDefault();if(ev.dataTransfer)ev.dataTransfer.dropEffect="move";}};
 window.planDrop=function(ev,tipo,destino){
- ev.preventDefault();
+ ev.preventDefault();ev.stopPropagation?.();
  let payload;try{payload=JSON.parse(ev.dataTransfer.getData("text/plain"));}catch(_){return;}
  if(!payload?.rod27||payload.tipo!==tipo||!/^[0-9]{1,12}$/.test(String(payload.rol||"")))return;
  const slot=findSlot(tipo,destino);if(!slot)return;
- const p=planState();p.selected=id(tipo,destino);p.chosen=null;repaint();move(payload.rol);
+ const p=planState();p.selected=id(tipo,destino);p.chosen=null;p.armed=null;repaint();move(payload.rol);
 };
 })();

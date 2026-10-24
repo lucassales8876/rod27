@@ -59,5 +59,16 @@ vm.runInThisContext(fs.readFileSync("planejamento-rodizio.js","utf8"));
  assert(!calls.some(x=>/office_replace|office_change|save_classification|evaluation/.test(x.action)));
  window.planDrop({preventDefault(){},dataTransfer:{getData:()=>JSON.stringify({rod27:true,tipo:"coordenador",rol:"201"})}},"dirigente","church-uuid");
  assert.equal(plan.planejamento.revisao,2,"Drag de outro tipo não deve alterar planejamento");
+ window.planDrop({preventDefault(){},stopPropagation(){},dataTransfer:{getData:()=>JSON.stringify({rod27:true,tipo:"dirigente",rol:"102"})}},"dirigente","church-uuid");
+ await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+ assert.equal(plan.planejamento.revisao,3,"Drop válido deve gerar movimentação real");
+ await window.planUndo();assert.equal(plan.planejamento.revisao,4);
+ window.planArm("dirigente","102");
+ window.planPick("dirigente:church-uuid");
+ await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+ assert.equal(plan.planejamento.revisao,5,"Clique origem e destino deve movimentar");
+ await window.planUndo();assert.equal(plan.planejamento.revisao,6);
+ assert.equal(JSON.stringify(original),baseline);
+
  console.log("PASS: alternância visual 2027, árvore, fotos, pesquisa, confirmação, revisão, desfazer, drag por tipo e isolamento 2026");
 })().catch(e=>{console.error(e);process.exitCode=1;});

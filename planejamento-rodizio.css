@@ -32,3 +32,5 @@
 .rplan-event{padding:10px 0;border-bottom:1px solid var(--l);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}
 .rplan-event strong{font-size:12px}.rplan-event span{font-size:11px;color:var(--m)}
 @media(max-width:860px){.rplan .rmap-work.rmap-focused{grid-template-columns:minmax(0,1fr)}.rplan-tree{max-height:360px;position:static}.rmap-year{width:100%}.rmap-year .btn{flex:1}}
+
+.rplan-grab{min-width:35px;height:38px;border:1px dashed #7894bb;border-radius:10px;background:#eff5fd;color:#223958;font-size:19px;font-weight:900;cursor:grab;touch-action:pan-y}.rplan-grab:hover{background:#dbe9ff}.rplan-grab:active{cursor:grabbing}.rplan-line:has(.rplan-grab):hover{outline:1px dashed #a0b2ce;border-radius:12px}

@@ -1,3 +1,4 @@
+import {encryptText,decryptText,encryptFile,decryptFile,encodeBase64} from "../_shared/rod27-content-crypto.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 const SUPABASE_URL=Deno.env.get("SUPABASE_URL")!;
@@ -16,6 +17,27 @@ function canOperate(ctx:any){return ctx.admin.papel==="superadmin"||ctx.admin.pa
 async function audit(ctx:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:ctx.user.id,papel:ctx.admin.papel,acao,entidade,entidade_id:id,detalhes})}
 async function cycle(){const{data,error}=await db.from("ciclos_rodizio").select("id,ano,ano_base,nome,status").eq("ano",2027).single();if(error)throw error;return data}
 async function sectorContext(n:number){const c=await cycle();const{data:s}=await db.from("setores").select("id,numero,area").eq("numero",n).single();const{data:coord}=await db.from("coordenacoes_setor").select("id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id).eq("setor_id",s.id).single();const{data:cred}=await db.from("coordenador_credenciais").select("id,rol_login,status,ultimo_login_em,bloqueado_ate").eq("coordenacao_id",coord.id).single();return{c,s,coord,cred}}
+async function unveilManifest(row:any){
+ if(!row)return row;
+ const text=await decryptText(row.justificativa,"manifest:"+row.coordenacao_id);
+ if(typeof row.justificativa==="string"&&row.justificativa.startsWith("r27e1:")){
+  const data=JSON.parse(text||"{}");
+  return {...row,deseja_permanecer:data.deseja_permanecer??null,
+   opcao_movimentacao:data.opcao_movimentacao??null,justificativa:data.justificativa??null};
+ }
+ return row;
+}
+async function unveilAnswer(row:any,evalId:string){
+ return {...row,
+  resposta_texto:await decryptText(row.resposta_texto,"answer:"+evalId+":"+row.pergunta_id),
+  resposta_opcao:await decryptText(row.resposta_opcao,"answer:"+evalId+":"+row.pergunta_id)};
+}
+async function protectedDocument(id:string,path:string,mime:string){
+ const {data,error}=await db.storage.from("rod27-documentos").download(path);
+ if(error||!data)throw error??new Error("Arquivo privado indisponível.");
+ const plain=await decryptFile(new Uint8Array(await data.arrayBuffer()),"document:"+path);
+ return{ok:true,base64:encodeBase64(plain),mime,expira_segundos:0};
+}
 async function planningSnapshot(ctx:any){
  if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
  const c=await cycle();
@@ -187,7 +209,7 @@ async function coordinatorProfile(ctx:any,b:any){
  return{ok:true,ano_base:2026,ciclo_manifestacao:2027,
   coordenador:{id:coord.id,rol:coord.obreiro_rol,nome:people?.[0]?.nome??coord.coordenador_nome_snapshot,
    foto_url:people?.[0]?.foto_url??null,setor:sector.numero,area:sector.area},
-  manifestacao:manifest??null,documentos:docs??[]};
+  manifestacao:await unveilManifest(manifest),documentos:docs??[]};
 }
 async function coordinatorUpload(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
@@ -207,8 +229,9 @@ async function coordinatorUpload(ctx:any,b:any){
  if(!((mime==="application/pdf"&&isPdf)||(mime==="image/jpeg"&&isJpeg)||(mime==="image/png"&&isPng)))throw new Error("O conteúdo do arquivo não corresponde ao formato informado.");
  const sha256=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(v=>v.toString(16).padStart(2,"0")).join("");
  const ext=mime==="application/pdf"?"pdf":mime==="image/jpeg"?"jpg":"png";
- const path="coordenador/"+c.id+"/"+coord.id+"/"+crypto.randomUUID()+"."+ext;
- const {error:storageError}=await db.storage.from("rod27-documentos").upload(path,bytes,{contentType:mime,upsert:false,cacheControl:"private"});
+ const path="coordenador/"+c.id+"/"+coord.id+"/"+crypto.randomUUID()+".r27";
+ const protectedBytes=await encryptFile(bytes,"document:"+path);
+ const {error:storageError}=await db.storage.from("rod27-documentos").upload(path,protectedBytes,{contentType:"application/octet-stream",upsert:false,cacheControl:"private"});
  if(storageError)throw storageError;
  const{data:doc,error:insertError}=await db.from("documentos_coordenador").insert({
   coordenacao_id:coord.id,ciclo_id:c.id,obreiro_rol:coord.obreiro_rol,
@@ -229,17 +252,16 @@ async function coordinatorDocumentUrl(ctx:any,b:any){
  const id=String(b.documento_id??"");
  if(!/^[a-f0-9-]{36}$/i.test(id))throw new Error("Documento inválido.");
  const{data:doc,error}=await db.from("documentos_coordenador")
-  .select("id,caminho_storage").eq("id",id).eq("coordenacao_id",coord.id)
+  .select("id,caminho_storage,tipo_mime").eq("id",id).eq("coordenacao_id",coord.id)
   .eq("ciclo_id",c.id).eq("obreiro_rol",coord.obreiro_rol).maybeSingle();
  if(error||!doc)throw new Error("Documento indisponível para esta coordenação.");
- const {data, error:signedError}=await db.storage.from("rod27-documentos").createSignedUrl(doc.caminho_storage,300);
- if(signedError||!data?.signedUrl)throw new Error("Não foi possível abrir o documento.");
+
  await audit(ctx,"consultar_documento_coordenador","documentos_coordenador",id,{coordenacao_id:coord.id});
- return{ok:true,url:data.signedUrl,expira_segundos:300};
+ return await protectedDocument(id,doc.caminho_storage,doc.tipo_mime);
 }
 async function bootstrap(ctx:any){const c=await cycle();const{data:selfSetting}=await db.from("configuracoes_sistema_runtime").select("valor").eq("chave","avaliacao.autoavaliacao.permitida").maybeSingle();const autoavaliacao_permitida=selfSetting?.valor?.permitida===true;const[{data:coords},{data:secs},{data:creds},{data:evals}]=await Promise.all([db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),db.from("setores").select("id,numero,area"),db.from("coordenador_credenciais").select("coordenacao_id,rol_login,status,ultimo_login_em"),db.from("avaliacoes_dirigente").select("coordenacao_id,status,eh_proprio_coordenador").eq("ciclo_id",c.id).eq("eh_proprio_coordenador",false)]);const sm=new Map((secs??[]).map((x:any)=>[x.id,x])),cm=new Map((creds??[]).map((x:any)=>[x.coordenacao_id,x])),em=new Map<string,any[]>();for(const x of evals??[]){const a=em.get(x.coordenacao_id)??[];a.push(x);em.set(x.coordenacao_id,a)}const rows=(coords??[]).map((x:any)=>{const s=sm.get(x.setor_id),cr=cm.get(x.id),ee=em.get(x.id)??[];return{setor:s.numero,area:s.area,coordenador:x.coordenador_nome_snapshot,rol:x.obreiro_rol,total:ee.length,tratamento_especial:0,nao_iniciadas:ee.filter(z=>z.status==="nao_iniciada").length,em_preenchimento:ee.filter(z=>z.status==="em_preenchimento").length,enviadas:ee.filter(z=>z.status==="enviada").length,credencial_status:cr?.status??"nao_configurada",ultimo_login_em:cr?.ultimo_login_em??null}}).sort((a,b)=>a.setor-b.setor);return{ok:true,autoavaliacao_permitida,admin:{email:ctx.user.email,papel:ctx.admin.papel,nome_exibicao:ctx.admin.nome_exibicao},summary:{setores:rows.length,total:rows.reduce((n,x)=>n+x.total,0),nao_iniciadas:rows.reduce((n,x)=>n+x.nao_iniciadas,0),em_preenchimento:rows.reduce((n,x)=>n+x.em_preenchimento,0),enviadas:rows.reduce((n,x)=>n+x.enviadas,0),credenciais_ativas:rows.filter(x=>x.credencial_status==="ativa").length},sectors:rows}}
-async function manifestations(ctx:any){if(!canOperate(ctx))throw new Error("Sem permissão.");const c=await cycle();const[{data:coords,error:cErr},{data:secs,error:sErr},{data:churches,error:gErr},{data:owners,error:oErr},{data:rows,error:mErr}]=await Promise.all([db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),db.from("setores").select("id,numero,area"),db.from("congregacoes").select("id,nome,setor"),db.from("avaliacoes_dirigente").select("coordenacao_id,congregacao_id,congregacao_nome_snapshot,dirigente_rol,dirigente_nome_snapshot").eq("ciclo_id",c.id).eq("eh_proprio_coordenador",true),db.from("manifestacoes_interesse_coordenador").select("id,coordenacao_id,coordenador_rol_snapshot,coordenador_nome_snapshot,setor_numero_snapshot,congregacao_nome_snapshot,deseja_permanecer,opcao_movimentacao,justificativa,status,criado_em,atualizado_em,enviada_em").eq("ciclo_id",c.id)]);if(cErr||sErr||gErr||oErr||mErr)throw cErr??sErr??gErr??oErr??mErr;const sm=new Map((secs??[]).map((x:any)=>[x.id,x])),gm=new Map((churches??[]).map((x:any)=>[x.id,x])),om=new Map((owners??[]).map((x:any)=>[x.coordenacao_id,x])),mm=new Map((rows??[]).map((x:any)=>[x.coordenacao_id,x]));const list=(coords??[]).map((x:any)=>{const sec=sm.get(x.setor_id),own=om.get(x.id),church=gm.get(own?.congregacao_id),m=mm.get(x.id);if(!sec||!own||!church||own.dirigente_rol!==x.obreiro_rol||own.dirigente_nome_snapshot!==x.coordenador_nome_snapshot||own.congregacao_nome_snapshot!==church.nome||church.setor!==sec.numero)throw new Error("Identificação de coordenação ou setor inconsistente.");return{id:m?.id??null,status:m?.status??"pendente",coordenador_rol_snapshot:x.obreiro_rol,coordenador_nome_snapshot:x.coordenador_nome_snapshot,setor_numero_snapshot:sec.numero,area:sec.area,congregacao_id:own.congregacao_id,congregacao_nome_snapshot:own.congregacao_nome_snapshot,deseja_permanecer:m?.deseja_permanecer??null,opcao_movimentacao:m?.opcao_movimentacao??null,justificativa:m?.justificativa??null,criado_em:m?.criado_em??null,atualizado_em:m?.atualizado_em??null,enviada_em:m?.enviada_em??null}}).sort((a,b)=>a.setor_numero_snapshot-b.setor_numero_snapshot);return{ok:true,manifestations:list}}async function sector(n:number){const x=await sectorContext(n);const{data:e,error}=await db.from("avaliacoes_dirigente").select("id,congregacao_nome_snapshot,dirigente_nome_snapshot,dirigente_foto_url_snapshot,status,eh_proprio_coordenador,iniciada_em,enviada_em").eq("ciclo_id",x.c.id).eq("coordenacao_id",x.coord.id).eq("eh_proprio_coordenador",false).order("congregacao_nome_snapshot");if(error)throw error;return{ok:true,setor:x.s.numero,area:x.s.area,coordenador:x.coord.coordenador_nome_snapshot,evaluations:e??[]}}
-async function evaluation(id:string){const{data:e,error}=await db.from("avaliacoes_dirigente").select("id,ciclo_id,coordenacao_id,congregacao_nome_snapshot,dirigente_nome_snapshot,status,enviada_em,eh_proprio_coordenador,formulario_versao,formulario_snapshot").eq("id",id).eq("eh_proprio_coordenador",false).maybeSingle();if(error||!e||e.status!=="enviada")return null;const[{data:q},{data:a},{data:c}]=await Promise.all([db.from("perguntas_avaliacao").select("id,titulo,ordem").eq("ciclo_id",e.ciclo_id).eq("ativa",true).eq("status","publicada").order("ordem"),db.from("respostas_avaliacao").select("pergunta_id,resposta_texto,resposta_opcao").eq("avaliacao_id",e.id),db.from("classificacoes_avaliacao").select("*").eq("avaliacao_id",e.id).maybeSingle()]);const am=new Map((a??[]).map((z:any)=>[z.pergunta_id,z]));const answerQuestions=Array.isArray(e.formulario_snapshot?.questions)?e.formulario_snapshot.questions:(q??[]);const answers=answerQuestions.map((z:any)=>{const r=am.get(z.id);return{titulo:z.titulo,resposta:r?.resposta_texto??r?.resposta_opcao??""}});const{data:co}=await db.from("coordenacoes_setor").select("setor_id").eq("id",e.coordenacao_id).single();const{data:s}=await db.from("setores").select("numero").eq("id",co.setor_id).single();return{ok:true,evaluation:e,answers,classification:c,setor:s.numero}}
+async function manifestations(ctx:any){if(!canOperate(ctx))throw new Error("Sem permissão.");const c=await cycle();const[{data:coords,error:cErr},{data:secs,error:sErr},{data:churches,error:gErr},{data:owners,error:oErr},{data:rows,error:mErr}]=await Promise.all([db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),db.from("setores").select("id,numero,area"),db.from("congregacoes").select("id,nome,setor"),db.from("avaliacoes_dirigente").select("coordenacao_id,congregacao_id,congregacao_nome_snapshot,dirigente_rol,dirigente_nome_snapshot").eq("ciclo_id",c.id).eq("eh_proprio_coordenador",true),db.from("manifestacoes_interesse_coordenador").select("id,coordenacao_id,coordenador_rol_snapshot,coordenador_nome_snapshot,setor_numero_snapshot,congregacao_nome_snapshot,deseja_permanecer,opcao_movimentacao,justificativa,status,criado_em,atualizado_em,enviada_em").eq("ciclo_id",c.id)]);if(cErr||sErr||gErr||oErr||mErr)throw cErr??sErr??gErr??oErr??mErr;const sm=new Map((secs??[]).map((x:any)=>[x.id,x])),gm=new Map((churches??[]).map((x:any)=>[x.id,x])),om=new Map((owners??[]).map((x:any)=>[x.coordenacao_id,x])),mm=new Map((await Promise.all((rows??[]).map(unveilManifest))).map((x:any)=>[x.coordenacao_id,x]));const list=(coords??[]).map((x:any)=>{const sec=sm.get(x.setor_id),own=om.get(x.id),church=gm.get(own?.congregacao_id),m=mm.get(x.id);if(!sec||!own||!church||own.dirigente_rol!==x.obreiro_rol||own.dirigente_nome_snapshot!==x.coordenador_nome_snapshot||own.congregacao_nome_snapshot!==church.nome||church.setor!==sec.numero)throw new Error("Identificação de coordenação ou setor inconsistente.");return{id:m?.id??null,status:m?.status??"pendente",coordenador_rol_snapshot:x.obreiro_rol,coordenador_nome_snapshot:x.coordenador_nome_snapshot,setor_numero_snapshot:sec.numero,area:sec.area,congregacao_id:own.congregacao_id,congregacao_nome_snapshot:own.congregacao_nome_snapshot,deseja_permanecer:m?.deseja_permanecer??null,opcao_movimentacao:m?.opcao_movimentacao??null,justificativa:m?.justificativa??null,criado_em:m?.criado_em??null,atualizado_em:m?.atualizado_em??null,enviada_em:m?.enviada_em??null}}).sort((a,b)=>a.setor_numero_snapshot-b.setor_numero_snapshot);return{ok:true,manifestations:list}}async function sector(n:number){const x=await sectorContext(n);const{data:e,error}=await db.from("avaliacoes_dirigente").select("id,congregacao_nome_snapshot,dirigente_nome_snapshot,dirigente_foto_url_snapshot,status,eh_proprio_coordenador,iniciada_em,enviada_em").eq("ciclo_id",x.c.id).eq("coordenacao_id",x.coord.id).eq("eh_proprio_coordenador",false).order("congregacao_nome_snapshot");if(error)throw error;return{ok:true,setor:x.s.numero,area:x.s.area,coordenador:x.coord.coordenador_nome_snapshot,evaluations:e??[]}}
+async function evaluation(id:string){const{data:e,error}=await db.from("avaliacoes_dirigente").select("id,ciclo_id,coordenacao_id,congregacao_nome_snapshot,dirigente_nome_snapshot,status,enviada_em,eh_proprio_coordenador,formulario_versao,formulario_snapshot").eq("id",id).eq("eh_proprio_coordenador",false).maybeSingle();if(error||!e||e.status!=="enviada")return null;const[{data:q},{data:a},{data:c}]=await Promise.all([db.from("perguntas_avaliacao").select("id,titulo,ordem").eq("ciclo_id",e.ciclo_id).eq("ativa",true).eq("status","publicada").order("ordem"),db.from("respostas_avaliacao").select("pergunta_id,resposta_texto,resposta_opcao").eq("avaliacao_id",e.id),db.from("classificacoes_avaliacao").select("*").eq("avaliacao_id",e.id).maybeSingle()]);const clear=await Promise.all((a??[]).map((z:any)=>unveilAnswer(z,e.id)));const am=new Map(clear.map((z:any)=>[z.pergunta_id,z]));const answerQuestions=Array.isArray(e.formulario_snapshot?.questions)?e.formulario_snapshot.questions:(q??[]);const answers=answerQuestions.map((z:any)=>{const r=am.get(z.id);return{titulo:z.titulo,resposta:r?.resposta_texto??r?.resposta_opcao??""}});const{data:co}=await db.from("coordenacoes_setor").select("setor_id").eq("id",e.coordenacao_id).single();const{data:s}=await db.from("setores").select("numero").eq("id",co.setor_id).single();return{ok:true,evaluation:e,answers,classification:c?{...c,resumo_analitico:await decryptText(c.resumo_analitico,"classification:"+e.id)}:null,setor:s.numero}}
 
 async function exportDetailed(ctx:any,b:any){
  if(!canOperate(ctx))throw Error("Acesso restrito.");
@@ -290,7 +312,7 @@ async function exportDetailed(ctx:any,b:any){
     congregacao:ev.congregacao_nome_snapshot,dirigente:ev.dirigente_nome_snapshot,dirigente_rol:ev.dirigente_rol,
     avaliacao_id:ev.id,versao:ev.formulario_versao,origem:ev.origem_preenchimento,
     enviada_em:ev.enviada_em,pergunta_numero:q.ordem,pergunta:q.enunciado||q.titulo,
-    resposta:answer?.resposta_texto??answer?.resposta_opcao??""
+    resposta:await decryptText(answer?.resposta_texto??answer?.resposta_opcao??"","answer:"+ev.id+":"+q.id)
    });
   }
  }
@@ -302,7 +324,7 @@ async function exportDetailed(ctx:any,b:any){
 }
 async function resetPin(ctx:any,n:number){if(!canOperate(ctx))throw new Error("Sem permissão.");const x=await sectorContext(n),pin=genPin(),hash=await hashPin(pin);const{data,error}=await db.rpc("rod27_reset_coordinator_pin",{p_cred_id:x.cred.id,p_pin:pin,p_hash:hash,p_admin:ctx.user.id});if(error)throw error;return{ok:true,setor:n,rol:data?.[0]?.rol??x.coord.obreiro_rol,pin}}
 async function revoke(ctx:any,n:number){if(!canOperate(ctx))throw new Error("Sem permissão.");const x=await sectorContext(n);await db.from("coordenador_sessoes").update({revogada_em:new Date().toISOString()}).eq("credencial_id",x.cred.id).is("revogada_em",null);const{error}=await db.from("coordenador_credenciais").update({status:"revogada"}).eq("id",x.cred.id);if(error)throw error;await audit(ctx,"revoke_coordinator","coordenador_credenciais",x.cred.id,{setor:n});return{ok:true}}
-async function saveClass(ctx:any,b:any){if(!canOperate(ctx))throw new Error("Sem permissão.");const evaluationId=String(b.avaliacao_id??"").trim();if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(evaluationId))throw new Error("Avaliação inválida.");const currentCycle=await cycle();const{data:targetEval,error:targetError}=await db.from("avaliacoes_dirigente").select("status").eq("id",evaluationId).eq("ciclo_id",currentCycle.id).maybeSingle();if(targetError||!targetEval||targetEval.status!=="enviada")throw new Error("A avaliação precisa estar enviada para classificação.");const allowed=["pessimo","ruim","mediano","bom","excelente"];for(const k of["qualificacao","reputacao","capacitacao","engajamento"])if(!allowed.includes(String(b[k])))throw new Error("Classificação inválida.");const payload={avaliacao_id:evaluationId,status:"validada",qualificacao:b.qualificacao,reputacao:b.reputacao,capacitacao:b.capacitacao,engajamento:b.engajamento,resumo_analitico:String(b.resumo??"").trim()||null,validado_por:ctx.user.id,validado_em:new Date().toISOString(),atualizado_em:new Date().toISOString()};const{error}=await db.from("classificacoes_avaliacao").upsert(payload,{onConflict:"avaliacao_id"});if(error)throw error;await audit(ctx,"classify_evaluation","avaliacoes_dirigente",payload.avaliacao_id,{qualificacao:b.qualificacao,reputacao:b.reputacao,capacitacao:b.capacitacao,engajamento:b.engajamento});return{ok:true}}
+async function saveClass(ctx:any,b:any){if(!canOperate(ctx))throw new Error("Sem permissão.");const evaluationId=String(b.avaliacao_id??"").trim();if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(evaluationId))throw new Error("Avaliação inválida.");const currentCycle=await cycle();const{data:targetEval,error:targetError}=await db.from("avaliacoes_dirigente").select("status").eq("id",evaluationId).eq("ciclo_id",currentCycle.id).maybeSingle();if(targetError||!targetEval||targetEval.status!=="enviada")throw new Error("A avaliação precisa estar enviada para classificação.");const allowed=["pessimo","ruim","mediano","bom","excelente"];for(const k of["qualificacao","reputacao","capacitacao","engajamento"])if(!allowed.includes(String(b[k])))throw new Error("Classificação inválida.");const payload={avaliacao_id:evaluationId,status:"validada",qualificacao:b.qualificacao,reputacao:b.reputacao,capacitacao:b.capacitacao,engajamento:b.engajamento,resumo_analitico:await encryptText(String(b.resumo??"").trim()||null,"classification:"+evaluationId),validado_por:ctx.user.id,validado_em:new Date().toISOString(),atualizado_em:new Date().toISOString()};const{error}=await db.from("classificacoes_avaliacao").upsert(payload,{onConflict:"avaliacao_id"});if(error)throw error;await audit(ctx,"classify_evaluation","avaliacoes_dirigente",payload.avaliacao_id,{qualificacao:b.qualificacao,reputacao:b.reputacao,capacitacao:b.capacitacao,engajamento:b.engajamento});return{ok:true}}
 async function blankForm(ctx:any,b:any){
  const current=await cycle();
  const [{data:questions,error:qErr},{data:form,error:fErr}]=await Promise.all([
@@ -365,13 +387,12 @@ async function officeDocumentUrl(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Permissão insuficiente para consultar rascunhos e documentos originais.");
  const id=String(b.documento_id??"");
  if(!/^[a-f0-9-]{36}$/i.test(id))throw new Error("Documento inválido.");
- const{data:doc,error}=await db.from("documentos_avaliacao").select("id,caminho_storage,avaliacao_id").eq("id",id).maybeSingle();
+ const{data:doc,error}=await db.from("documentos_avaliacao").select("id,caminho_storage,avaliacao_id,tipo_mime").eq("id",id).maybeSingle();
  if(error||!doc)throw new Error("Documento não encontrado.");
  await requireCurrentEval(doc.avaliacao_id);
- const {data, error:signErr}=await db.storage.from("rod27-documentos").createSignedUrl(doc.caminho_storage,300);
- if(signErr||!data?.signedUrl)throw signErr??new Error("Não foi possível abrir o documento.");
+
  await audit(ctx,"consultar_documento","documentos_avaliacao",id,{avaliacao_id:doc.avaliacao_id});
- return{ok:true,url:data.signedUrl,expira_segundos:300};
+ return await protectedDocument(id,doc.caminho_storage,doc.tipo_mime);
 }
 async function officeUploadDocument(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Sem autorização para anexar.");
@@ -391,8 +412,8 @@ async function officeUploadDocument(ctx:any,b:any){
  if(!((mime==="application/pdf"&&isPdf)||(mime==="image/jpeg"&&isJpeg)||(mime==="image/png"&&isPng)))throw new Error("Tipo real do arquivo não corresponde à extensão.");
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(v=>v.toString(16).padStart(2,"0")).join("");
  const ext=mime==="application/pdf"?"pdf":mime==="image/jpeg"?"jpg":"png";
- const path="aval/"+evalId+"/"+crypto.randomUUID()+"."+ext;
- const{error:uploadError}=await db.storage.from("rod27-documentos").upload(path,bytes,{contentType:mime,upsert:false,cacheControl:"private"});
+ const path="aval/"+evalId+"/"+crypto.randomUUID()+".r27";
+ const protectedBytes=await encryptFile(bytes,"document:"+path);const{error:uploadError}=await db.storage.from("rod27-documentos").upload(path,protectedBytes,{contentType:"application/octet-stream",upsert:false,cacheControl:"private"});
  if(uploadError)throw uploadError;
  const{data:doc,error:dbErr}=await db.from("documentos_avaliacao").insert({avaliacao_id:evalId,caminho_storage:path,nome_original:nome,tipo_mime:mime,tamanho_bytes:bytes.length,sha256:hash,enviado_por:ctx.user.id,status_ocr:"nao_processado"}).select("id").single();
  if(dbErr||!doc){await db.storage.from("rod27-documentos").remove([path]);throw dbErr??new Error("Falha ao cadastrar o documento.");}
@@ -409,7 +430,9 @@ async function officeTranscription(ctx:any,b:any){
   db.from("documentos_avaliacao").select("id,nome_original,tipo_mime,tamanho_bytes,enviado_em").eq("avaliacao_id",ev.id).order("enviado_em",{ascending:false})
  ]);
  if(qErr||dErr||docErr)throw qErr??dErr??docErr;
- return{ok:true,avaliacao:ev,perguntas:questions??[],rascunho:draft,documentos:docs??[]};
+ const rows=Array.isArray(draft?.respostas)?await Promise.all(draft.respostas.map(async(item:any)=>({
+ ...item,resposta:await decryptText(item.resposta??null,"answer:"+ev.id+":"+item.pergunta_id)}))):null;
+ return{ok:true,avaliacao:ev,perguntas:questions??[],rascunho:draft?{...draft,respostas:rows}:null,documentos:docs??[]};
 }
 async function officeSaveTranscription(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Sem autorização para transcrever.");
@@ -419,7 +442,20 @@ async function officeSaveTranscription(ctx:any,b:any){
  if(respostas.length>80)throw new Error("Quantidade de respostas inválida.");
  const doc=b.documento_id?String(b.documento_id):null;
  if(doc&&!/^[a-f0-9-]{36}$/i.test(doc))throw new Error("Documento inválido.");
- const{data,error}=await db.rpc("rod27_salvar_transcricao",{p_avaliacao:ev.id,p_admin:ctx.user.id,p_respostas:respostas,p_documento:doc,p_finalizar:b.finalizar===true});
+ const{data:validQuestions,error:qerr}=await db.from("perguntas_avaliacao").select("id,tipo_resposta,opcoes,ativa,status").eq("ciclo_id",ev.ciclo_id);
+ if(qerr)throw qerr;
+ const byId=new Map((validQuestions??[]).map((x:any)=>[x.id,x]));
+ const encrypted:any[]=[];
+ for(const item of respostas){
+  const q:any=byId.get(String(item?.pergunta_id??""));
+  if(!q||!q.ativa)throw new Error("Pergunta inválida.");
+  const value=String(item?.resposta??"").trim();
+  if(value.length>10000)throw new Error("Resposta longa demais.");
+  if(q.tipo_resposta==="escolha_unica"&&value&&!q.opcoes?.includes(value))throw new Error("Opção inválida.");
+  if(b.finalizar===true&&q.status!=="publicada")throw new Error("Pergunta não publicada.");
+  encrypted.push({pergunta_id:q.id,resposta:value?await encryptText(value,"answer:"+ev.id+":"+q.id):""});
+ }
+ const{data,error}=await db.rpc("rod27_salvar_transcricao",{p_avaliacao:ev.id,p_admin:ctx.user.id,p_respostas:encrypted,p_documento:doc,p_finalizar:b.finalizar===true});
  if(error)throw error;
  return{ok:true,resultado:data?.[0]};
 }

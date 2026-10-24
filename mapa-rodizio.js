@@ -6,7 +6,7 @@ let fetchVersion=0;
 function safeUrl(value){
  try{
   const url=new URL(String(value||""));
-  return (url.protocol==="https:"||url.protocol==="http:")?url.href:"";
+  return (url.protocol==="https:"||url.protocol==="http:"||(url.protocol==="blob:"&&typeof window.location?.origin==="string"&&url.href.startsWith("blob:"+window.location.origin+"/")))?url.href:"";
  }catch(_){return "";}
 }
 function photo(url,name,large){
@@ -356,7 +356,7 @@ window.mapReloadProfile=function(){
 };
 window.mapClosePreview=function(){
  const state=profileCache.get(S.mapSelected);
- if(state){state.preview=null;repaint();}
+ if(state){if(state.preview?.url?.startsWith("blob:"))URL.revokeObjectURL(state.preview.url);state.preview=null;repaint();}
 };
 window.mapOpenDocument=async function(docId){
  const id=S.mapSelected,state=profileCache.get(id);
@@ -366,8 +366,9 @@ window.mapOpenDocument=async function(docId){
  try{
   const result=await api("office_document_url",{documento_id:docId});
   if(S.mapSelected!==id)return;
-  const url=safeUrl(result.url);
-  if(!url)throw new Error("Endereço temporário inválido.");
+  const url=typeof window.rod27DocumentObjectURL==="function"?window.rod27DocumentObjectURL(result):safeUrl(result.url);
+  if(!url)throw new Error("Documento privado inválido.");
+  if(state.preview?.url?.startsWith("blob:"))URL.revokeObjectURL(state.preview.url);
   state.preview={url,name:doc.nome_original,mime:doc.tipo_mime};
   repaint();
  }catch(err){if(typeof toast==="function")toast(err.message||"Não foi possível abrir o documento.");}
@@ -403,8 +404,9 @@ window.mapOpenCoordinatorDoc=async function(docId){
    setor:selected.sector.numero,rol:String(selected.value.rol),documento_id:docId
   });
   if(id!==S.mapSelected)return;
-  const url=safeUrl(result.url);
-  if(!url)throw new Error("Link temporário inválido.");
+  const url=typeof window.rod27DocumentObjectURL==="function"?window.rod27DocumentObjectURL(result):safeUrl(result.url);
+  if(!url)throw new Error("Documento privado inválido.");
+  if(state.preview?.url?.startsWith("blob:"))URL.revokeObjectURL(state.preview.url);
   state.preview={url,name:doc.nome_original,mime:doc.tipo_mime};
   repaint();
  }catch(err){if(typeof toast==="function")toast(err.message||"Não foi possível abrir o documento.");}

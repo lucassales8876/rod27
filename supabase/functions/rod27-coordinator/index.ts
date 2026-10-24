@@ -1,3 +1,4 @@
+import {encryptText,decryptText} from "../_shared/rod27-content-crypto.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 
@@ -288,12 +289,28 @@ async function coordinatorAssignment(ctx: any) {
     setor_numero: ctx.setor.numero,
   };
 }
+async function unveilManifestation(row:any){
+ if(!row)return row;
+ const content=await decryptText(row.justificativa,"manifest:"+row.coordenacao_id);
+ if(typeof row.justificativa==="string"&&row.justificativa.startsWith("r27e1:")){
+  const details=JSON.parse(content||"{}");
+  return {...row,deseja_permanecer:details.deseja_permanecer??null,
+    opcao_movimentacao:details.opcao_movimentacao??null,justificativa:details.justificativa??null};
+ }
+ return row;
+}
+async function unveilAnswers(rows:any[],evaluationId:string){
+ return Promise.all((rows||[]).map(async row=>({
+  ...row,resposta_texto:await decryptText(row.resposta_texto,"answer:"+evaluationId+":"+row.pergunta_id),
+  resposta_opcao:await decryptText(row.resposta_opcao,"answer:"+evaluationId+":"+row.pergunta_id)
+ })));
+}
 async function currentManifestation(ctx: any) {
   const { data, error } = await db.from("manifestacoes_interesse_coordenador")
     .select("id,ciclo_id,coordenacao_id,deseja_permanecer,opcao_movimentacao,justificativa,status,criado_em,atualizado_em,enviada_em")
     .eq("ciclo_id", ctx.coord.ciclo_id).eq("coordenacao_id", ctx.coord.id).maybeSingle();
   if (error) throw error;
-  return data;
+  return await unveilManifestation(data);
 }
 async function saveManifestation(ctx: any, body: any, submit: boolean) {
   const identity = await coordinatorAssignment(ctx);
@@ -326,6 +343,12 @@ async function saveManifestation(ctx: any, body: any, submit: boolean) {
     atualizado_em: now,
     enviada_em: submit ? now : null,
   };
+  // O payload completo (inclusive escolhas e booleanos) não fica legível no Postgres.
+  payload.justificativa=await encryptText(JSON.stringify({
+    deseja_permanecer:wants,opcao_movimentacao:option,justificativa:reason
+  }),"manifest:"+ctx.coord.id);
+  payload.deseja_permanecer=null;
+  payload.opcao_movimentacao=null;
   const columns = "id,ciclo_id,coordenacao_id,deseja_permanecer,opcao_movimentacao,justificativa,status,criado_em,atualizado_em,enviada_em";
   // UPDATE guardado por status, preservando o estado terminal "enviada".
   async function updateDraft() {
@@ -345,7 +368,7 @@ async function saveManifestation(ctx: any, body: any, submit: boolean) {
   if (result.error) { console.error("manifestation save failed", result.error.code); return fail("Não foi possível salvar a manifestação.", 500); }
   if (!result.data) return fail("Manifestação já enviada e bloqueada para alterações.", 409);
   const data = result.data;
-  return json({ ok: true, manifestation: data });
+  return json({ ok: true, manifestation: await unveilManifestation(data) });
 }
 async function selfEvaluationAllowed(): Promise<boolean> {
   const {data,error}=await db.from("configuracoes_sistema_runtime").select("valor")
@@ -409,7 +432,7 @@ async function handleAuthorized(ctx: any, body: any) {
       db.from("respostas_avaliacao").select("pergunta_id,resposta_texto,resposta_opcao,atualizado_em").eq("avaliacao_id", evaluation.id),
     ]);
     return json({
-      ok: true, evaluation, config: evaluation.formulario_snapshot?.config ?? config, questions: config?.status === "publicado" ? (evaluation.formulario_snapshot?.questions ?? questions ?? []) : [], answers: answers ?? [],
+      ok: true, evaluation, config: evaluation.formulario_snapshot?.config ?? config, questions: config?.status === "publicado" ? (evaluation.formulario_snapshot?.questions ?? questions ?? []) : [], answers: await unveilAnswers(answers??[],evaluation.id),
       editable: config?.status === "publicado" && evaluation.status !== "enviada" && (!evaluation.eh_proprio_coordenador || await selfEvaluationAllowed()),
       special_reason: evaluation.eh_proprio_coordenador && !(await selfEvaluationAllowed())
         ? "A avaliação do próprio coordenador será tratada separadamente pela Secretaria."
@@ -460,11 +483,11 @@ async function handleAuthorized(ctx: any, body: any) {
       avaliacao_id: evaluation.id, pergunta_id: q.id, atualizado_em: new Date().toISOString(),
       resposta_texto: null, resposta_opcao: null,
     };
-    if (q.tipo_resposta === "texto_longo") payload.resposta_texto = value;
+    if (q.tipo_resposta === "texto_longo") payload.resposta_texto = await encryptText(value,"answer:"+evaluation.id+":"+q.id);
     else {
       const options = Array.isArray(q.opcoes) ? q.opcoes : [];
       if (!options.includes(value)) return fail("Opção inválida.", 400);
-      payload.resposta_opcao = value;
+      payload.resposta_opcao = await encryptText(value,"answer:"+evaluation.id+":"+q.id);
     }
 
     const { error } = await db.from("respostas_avaliacao").upsert(payload, { onConflict: "avaliacao_id,pergunta_id" });
