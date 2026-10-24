@@ -26,7 +26,7 @@ async function seal(plain:Uint8Array,scope:string):Promise<Uint8Array>{
  const result=new Uint8Array(12+ciphertext.length);result.set(nonce);result.set(ciphertext,12);return result;
 }
 async function unseal(data:Uint8Array,scope:string):Promise<Uint8Array>{
- if(data.length<29)throw new Error("Conteudo cifrado incompleto.");
+ if(data.length<28)throw new Error("Conteudo cifrado incompleto.");
  try{
   const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:data.slice(0,12),additionalData:te.encode("rod27:"+scope)},await contentKey(),data.slice(12));
   return new Uint8Array(plain);
