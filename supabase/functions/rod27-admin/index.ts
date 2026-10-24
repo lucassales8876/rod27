@@ -64,10 +64,7 @@ async function planningFind(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
  const term=String(b.busca??"").trim();
  if(term.length<2||term.length>70)throw new Error("Informe pelo menos dois caracteres.");
- let query=db.schema("private").from("obreiros").select("rol,nome,foto_url").order("nome").limit(20);
- if(/^[0-9]+$/.test(term))query=query.ilike("rol",term+"%");
- else query=query.ilike("nome","%"+term.replace(/[%_]/g,"")+"%");
- const{data,error}=await query;
+ const{data,error}=await db.rpc("rod27_planejamento_buscar_obreiros",{p_busca:term});
  if(error)throw error;
  return{ok:true,pessoas:data??[]};
 }
