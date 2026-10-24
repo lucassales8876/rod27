@@ -275,8 +275,20 @@ function mapContent(){
  return'<div style="margin-bottom:12px">'+stats+'</div>'+
  '<div class="rmap-work'+((S.mapSelected.startsWith("d:")||S.mapSelected.startsWith("k:"))?" rmap-focused":"")+'"><section class="rmap-tree" aria-label="Árvore do rodízio de 2026">'+mapTree()+'</section>'+details()+'</div>';
 }
+window.rodizioYearPicker=function(){
+ return '<div class="rmap-year"><button class="btn '+(S.mapYear==="2026"?"primary":"ghost")+'" type="button" onclick="setRodizioMapYear(&quot;2026&quot;)">2026 · Atual</button>'+
+  '<button class="btn '+(S.mapYear==="2027"?"primary":"ghost")+'" type="button" onclick="setRodizioMapYear(&quot;2027&quot;)">2027 · Planejamento</button></div>';
+};
+window.setRodizioMapYear=function(year){
+ if(year!=="2026"&&year!=="2027")return;
+ S.mapYear=year;
+ render();
+ if(year==="2027"&&typeof window.planningFetch==="function")window.planningFetch(false);
+ if(year==="2026"&&!S.mapData)window.mapFetch();
+};
 window.mapMarkup=function(){
- return'<main class="rmap"><div class="rmap-top"><div><h2>Estrutura cadastrada em 2026</h2><p class="rmap-note">Área → Setor → Coordenador → Congregação → Dirigente</p></div>'+
+ if(S.mapYear==="2027"&&typeof window.planningMarkup==="function")return window.planningMarkup();
+ return'<main class="rmap">'+window.rodizioYearPicker()+'<div class="rmap-top"><div><h2>Estrutura cadastrada em 2026</h2><p class="rmap-note">Área → Setor → Coordenador → Congregação → Dirigente</p></div>'+
  '<button class="btn ghost small" type="button" onclick="mapFetch()">Atualizar base</button></div>'+
  '<div class="rmap-banner">Esta tela é somente para visualização. Ainda não existe sincronização em tempo real.</div>'+
  '<div class="rmap-toolbar"><input type="search" aria-label="Pesquisar estrutura do Rodízio" value="'+esc(S.mapQuery)+'" placeholder="Pesquisar pessoa, ROL, setor ou congregação" oninput="mapSearch(this.value)">'+
