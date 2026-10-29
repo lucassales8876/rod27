@@ -35,9 +35,9 @@ window.recoverLogin=async function(){
  toast("Se existir uma conta, as instruções de recuperação serão enviadas.");
 };
 window.doLogin=async function(){var er=document.getElementById("er");er.textContent="Entrando…";try{var x=await fetch(U+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("em").value.trim(),password:document.getElementById("pw").value})}),j=await x.json();if(!x.ok)throw new Error("E-mail ou senha inválidos.");ss(j);await boot()}catch(z){er.textContent=z.message}}
-window.logout=function(){AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
+window.logout=function(){closeM();S.coordData=null;AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
 function isTopAdmin(){return S.data?.admin?.papel==="superadmin1"}
-function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],...(isTopAdmin()?[["admins","Contas e PINs"]]:[]),["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
+function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],...(isTopAdmin()?[["admins","Contas"]]:[]),["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
 var AUD_TAPS=0;
 window.setTab=function(t){if(t==="admins"&&!isTopAdmin()){S.tab="overview";render();return;}
  if(t==="audit"){AUD_TAPS=S.tab==="audit"?AUD_TAPS+1:1;S.tab=t;if(AUD_TAPS>=3){AUD_TAPS=0;S.auditOpen=true;}}
@@ -159,7 +159,7 @@ function settings(d){
  "coordenador.senha.formato":["Formato do PIN inicial","Padrão implementado: PIN de 6 dígitos. Mudar o texto deste campo não gera PINs novos nem modifica os existentes."]
  };
  var units={"coordenador.login.bloqueio_minutos":"minutos","coordenador.login.max_falhas":"tentativas","coordenador.sessao.horas":"horas","coordenador.senha.formato":"dígitos"};
- return'<div class="card" style="margin-bottom:12px"><h3>Política de acesso dos coordenadores</h3><p class="muted">Estas opções são configurações de segurança, não uma lista de senhas. Para consultar ROLs ou gerar um PIN novo, use a aba <b>Contas e PINs</b>.</p></div><div class="grid">'+d.settings.filter(function(x){return Object.prototype.hasOwnProperty.call(labels,x.chave)}).map(function(x){
+ return'<div class="card" style="margin-bottom:12px"><h3>Política de acesso dos coordenadores</h3><p class="muted">Estas opções são configurações de segurança, não uma lista de senhas. Para consultar ROLs ou gerar um PIN novo, use a aba <b>Contas</b>.</p></div><div class="grid">'+d.settings.filter(function(x){return Object.prototype.hasOwnProperty.call(labels,x.chave)}).map(function(x){
  var a=labels[x.chave]||[x.chave,x.descricao||""],editable=x.chave!=="coordenador.senha.formato",v=typeof x.valor==="string"?x.valor:JSON.stringify(x.valor);
  return'<div class="card"><h3>'+e(a[0])+'</h3><p class="muted">'+e(a[1])+'</p><div class="field"><label>Valor atual ('+units[x.chave]+')</label>'+(editable?'<input type="number" min="1" max="1440" id="set_'+x.chave.replaceAll(".","_")+'" value="'+e(v)+'">':'<div class="code">PIN de 6 dígitos · formato fixo nesta versão</div>')+'</div>'+(editable?'<button class="btn primary small" onclick="saveSetting(&quot;'+x.chave+'&quot;)">Salvar configuração</button>':'')+'</div>'
  }).join("")+'</div>';
@@ -176,25 +176,16 @@ async function secretariaApi(action,p,retry){
  return j;
 }
 function credentialsHtml(){
- var h='<div class="card" style="margin-bottom:12px"><h3>Credenciais dos 42 coordenadores</h3><p class="muted">PINs confirmados podem ser consultados pelo superadmin. Cada consulta é registrada na auditoria.</p></div>';
+ var h='<div class="card" style="margin-bottom:12px"><h3>Credenciais dos 42 coordenadores</h3><p class="muted">Somente redefinições autorizadas. O novo PIN é exibido uma vez; PINs antigos não podem ser consultados.</p></div>';
  if(!S.coordData)return h+'<div class="card" id="coordList">Consultando credenciais…</div>';
  var sectors=S.coordData.sectors||[];
- h+='<div class="card" id="coordList" style="overflow-x:auto"><table class="table"><thead><tr><th>Setor</th><th>Coordenador</th><th>ROL</th><th>Estado</th><th>PIN ATUAL</th><th>Ação</th></tr></thead><tbody>';
- h+=sectors.map(function(x){return'<tr><td>'+e(x.setor)+'</td><td>'+e(x.coordenador)+'</td><td><span class="code">'+e(x.rol)+'</span></td><td>'+e(x.credencial_status)+'</td><td><button class="btn ghost small" onclick="showCoordinatorPIN('+Number(x.setor)+')">Mostrar PIN</button></td><td><button class="btn ghost small" onclick="rotateCoordinatorPIN('+Number(x.setor)+')">Redefinir PIN</button></td></tr>'}).join("");
+ h+='<div class="card" id="coordList" style="overflow-x:auto"><table class="table"><thead><tr><th>Setor</th><th>Coordenador</th><th>ROL</th><th>Estado</th><th>Ação</th></tr></thead><tbody>';
+ h+=sectors.map(function(x){return'<tr><td>'+e(x.setor)+'</td><td>'+e(x.coordenador)+'</td><td><span class="code">'+e(x.rol)+'</span></td><td>'+e(x.credencial_status)+'</td><td><button class="btn ghost small" onclick="rotateCoordinatorPIN('+Number(x.setor)+')">Redefinir PIN</button></td></tr>'}).join("");
  return h+'</tbody></table></div>';
 }
 async function loadCoordinatorAccess(){
  try{S.coordData=await secretariaApi("bootstrap");if(S.tab==="admins")render()}
  catch(x){var node=document.getElementById("coordList");if(node)node.textContent="Não foi possível consultar os coordenadores: "+x.message}
-}
-window.showCoordinatorPIN=async function(n){
- try{
-  var d=await api("show_coordinator_pin",{setor:n});
-  if(d.status!=="confirmed"){toast("Verificação pendente.");return}
-  window._latestPinInfo={rol:String(d.rol),pin:String(d.pin)};
-  box.innerHTML='<div class="ey">PIN ATUAL</div><h2>Setor '+e(n)+'</h2><div class="card"><div class="ey">ROL '+e(d.rol)+'</div><h2 class="code">'+e(d.pin)+'</h2></div><div class="actions"><button class="btn primary" onclick="copyNewPin()">Copiar ROL e PIN</button><button class="btn ghost" onclick="closeM()">Fechar</button></div>';
-  back.classList.add("show");
- }catch(x){toast(x.message)}
 }
 window.rotateCoordinatorPIN=async function(n){
  var s=S.coordData&&S.coordData.sectors&&S.coordData.sectors.find(function(x){return Number(x.setor)===Number(n)});
@@ -213,6 +204,7 @@ window.copyNewPin=async function(){
  if(!c)return;
  try{await navigator.clipboard.writeText("ROL: "+c.rol+"\nPIN: "+c.pin);toast("ROL e PIN copiados.")}catch(x){toast("Copie manualmente o PIN exibido.")}
 };
+document.addEventListener("visibilitychange",function(){if(document.hidden&&window._latestPinInfo)closeM()});window.addEventListener("pagehide",closeM);
 var AUDIT_AUTH={grant:null};
 function audit(d){
  var form=S.auditOpen&&!AUDIT_AUTH.grant?'<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:9px;align-items:center"><input id="audit_joint_pass" aria-label="Autorização" type="password" autocomplete="off" style="width:min(360px,80%);border:1px solid var(--line);padding:11px;border-radius:10px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();authorizeAudit()}"><button type="button" class="btn ghost" aria-label="Confirmar" onclick="authorizeAudit()">✓</button></div></div>':"";
