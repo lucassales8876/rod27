@@ -15,7 +15,7 @@ try{
  const login=await call('/auth/v1/token?grant_type=password','POST',{email,password:initial});assert.equal(login.status,200,'synthetic sign-in');
  const token=login.data.access_token;
  const locked=await call('/functions/v1/rod27-admin','POST',{action:'bootstrap'},token);assert.equal(locked.status,428,'real Edge requires password change');
- const changed=await call('/functions/v1/rod27-admin','POST',{action:'change_required_password',password:next},token);assert.equal(changed.status,200,'real password change and session revocation');
+ const changed=await call('/functions/v1/rod27-admin','POST',{action:'change_required_password',password:next},token);assert.equal(changed.status,200,'real change: '+String(changed.data.error||'unspecified'));
  const revoked=await call('/functions/v1/rod27-admin','POST',{action:'bootstrap'},token);assert.equal(revoked.status,401,'old signed JWT is revoked');
  const relogin=await call('/auth/v1/token?grant_type=password','POST',{email,password:next});assert.equal(relogin.status,200,'new password works');
  const flag=await call('/auth/v1/admin/users/'+id);assert.equal(flag.data.app_metadata.rod27_password_change_required,false,'server flag cleared');
