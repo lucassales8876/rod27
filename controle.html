@@ -13,12 +13,13 @@ main{padding:18px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:14px}.t
 @media(min-width:720px){.hero{margin-top:18px;border-radius:25px}.shell{padding-left:8px;padding-right:8px}}
 </style></head><body>
 <div id="app" class="shell"></div><div id="back" class="back"><div id="modal" class="modal"></div></div><div id="toast" class="toast"></div>
+<script src="/troca-obrigatoria.js"></script>
 <script>
 var U="https://zrjxxcytgtjuuinhkfux.supabase.co",K="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh",S={a:null,r:null,data:null,tab:"overview",auditOpen:false,ops:null,opsBusy:false,opsAt:0},app=document.getElementById("app"),back=document.getElementById("back"),box=document.getElementById("modal");
 function e(v){return String(v==null?"":v).replace(/[&<>"']/g,function(x){return{"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[x]})}function toast(m){var x=document.getElementById("toast");x.textContent=m;x.classList.add("show");setTimeout(function(){x.classList.remove("show")},2200)}
 function ss(d){S.a=d.access_token;S.r=d.refresh_token;sessionStorage.setItem("ctl_a",S.a||"");sessionStorage.setItem("ctl_r",S.r||"")}function clr(){AUDIT_AUTH.grant=null;S.auditOpen=false;AUD_TAPS=0;S.ops=null;S.opsAt=0;S.a=null;S.r=null;sessionStorage.removeItem("ctl_a");sessionStorage.removeItem("ctl_r")}
 async function rf(){if(!S.r)return false;var x=await fetch(U+"/auth/v1/token?grant_type=refresh_token",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({refresh_token:S.r})});if(!x.ok){clr();return false}ss(await x.json());return true}
-async function api(action,p,retry){var x=await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-control",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+S.a},body:JSON.stringify(Object.assign({action:action},p||{}))});if((x.status===401||x.status===403)&&!retry&&await rf())return api(action,p,true);var j=await x.json().catch(function(){return{ok:false,error:"Resposta inválida."}});if(x.status===401||x.status===403){clr();back.classList.remove("show");login("Sua sessão expirou ou não está autorizada. Entre novamente.");throw new Error("Sessão expirada ou acesso não autorizado.")}if(!x.ok||!j.ok)throw new Error(j.error||"Falha.");return j}
+async function api(action,p,retry){var x=await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-control",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+S.a},body:JSON.stringify(Object.assign({action:action},p||{}))});if((x.status===401||x.status===403)&&!retry&&await rf())return api(action,p,true);var j=await x.json().catch(function(){return{ok:false,error:"Resposta inválida."}});if(x.status===401||x.status===403){clr();back.classList.remove("show");login("Sua sessão expirou ou não está autorizada. Entre novamente.");throw new Error("Sessão expirada ou acesso não autorizado.")}if(j.password_change_required){var required=new Error(j.error);required.passwordChangeRequired=true;throw required}if(!x.ok||!j.ok)throw new Error(j.error||"Falha.");return j}
 function toggleSenha(btn){
  var fields=(btn.getAttribute("data-password-ids")||"").split(",").map(function(id){return document.getElementById(id)}).filter(Boolean);
  if(!fields.length)return;
@@ -239,6 +240,6 @@ window.removeAuditEntry=async function(id){
  catch(err){AUDIT_AUTH.grant=null;closeM();await boot(true);toast("Autorização inválida ou expirada. Valide novamente.")}
 };
 window.revokeAll=async function(){if(!confirm("Encerrar todas as sessões ativas dos coordenadores? Eles precisarão entrar novamente."))return;try{await api("revoke_all_coordinator_sessions");toast("Sessões encerradas.");await boot(true)}catch(x){toast(x.message)}}
-async function boot(silent){S.a=sessionStorage.getItem("ctl_a")||S.a;S.r=sessionStorage.getItem("ctl_r")||S.r;if(!S.a){login();return}try{S.data=await api("bootstrap");render();if(S.tab==="overview")refreshHealth(false)}catch(x){if(!silent){clr();login(x.message)}else toast(x.message)}}
+async function boot(silent){S.a=sessionStorage.getItem("ctl_a")||S.a;S.r=sessionStorage.getItem("ctl_r")||S.r;if(!S.a){login();return}try{S.data=await api("bootstrap");render();if(S.tab==="overview")refreshHealth(false)}catch(x){if(x.passwordChangeRequired){rod27RequirePasswordChange();return}if(!silent){clr();login(x.message)}else toast(x.message)}}
 boot();
 </script></body></html>

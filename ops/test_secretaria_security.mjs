@@ -14,7 +14,7 @@ for(const role of ['superadmin1','superadmin','secretario_geral','revisor']){
  for(const allowed of [false,true]){
   let operations=0;
   const db={auth:{getUser:async()=>({data:{user:{id:'actor'}}})},from:()=>({select:()=>({eq:()=>({eq:()=>({maybeSingle:async()=>({data:{papel:role,ativo:true}})})})})}),rpc:async()=>({data:allowed})};
-  const context=vm.createContext({Response,Request,console,db,crypto:globalThis.crypto,Deno:{serve(){}}});
+  const context=vm.createContext({adminSessionActive:async()=>true,passwordChangeRequired:()=>false,Response,Request,console,db,crypto:globalThis.crypto,Deno:{serve(){}}});
   vm.runInContext(admin.slice(admin.indexOf('const cors =')).replace(/Deno.serve\([\s\S]*$/,''),context);
   vm.runInContext('async function secretariaAllowed(db,id){const r=await db.rpc("rod27_secretaria_can_access",{p_actor:id});if(r.error)throw Error("authorization unavailable");return r.data===true}',context);
   // Every action must pass the common gate before its handler can run.
@@ -38,7 +38,7 @@ for(const role of ['superadmin1','superadmin','secretario_geral','revisor']){
 }
 for(const role of ['superadmin1','superadmin']){
  const db={auth:{getUser:async()=>({data:{user:{id:'actor'}}})},from:()=>({select:()=>({eq:()=>({eq:()=>({maybeSingle:async()=>({data:{papel:role,ativo:true}})})})})})};
- const context=vm.createContext({Response,Request,console,db,Deno:{serve(){}}});
+ const context=vm.createContext({adminSessionActive:async()=>true,passwordChangeRequired:()=>false,Response,Request,console,db,Deno:{serve(){}}});
  vm.runInContext(control.slice(control.indexOf('const cors =')).replace(/Deno.serve\([\s\S]*$/,''),context);
  const result=await context.handle(new Request('https://test/control',{method:'POST',headers:{authorization:'Bearer test'},body:'{"action":"show_coordinator_pin","setor":1}'}));
  check(result.status===403,'legacy PIN denied even to superadmin1');
@@ -64,7 +64,7 @@ check(html.includes('delete window._latestPinInfo'),'PIN cleared on close');
     const row={...payload,id:'synthetic-document-'+(++inserts)};rows.push(row);return{data:row};
    },then(resolve){resolve({data:rows.filter(x=>Object.entries(filters).every(([k,v])=>x[k]===v))})}};return q;
  },storage:{from(){return{async upload(p,b){files.set(p,b);return{}},async remove(ps){for(const p of ps)files.delete(p);return{}}}}}};
- const context=vm.createContext({Response,Request,console,db,crypto:globalThis.crypto,atob,Deno:{serve(){}}});
+ const context=vm.createContext({adminSessionActive:async()=>true,passwordChangeRequired:()=>false,Response,Request,console,db,crypto:globalThis.crypto,atob,Deno:{serve(){}}});
  vm.runInContext(admin.slice(admin.indexOf('const cors =')).replace(/Deno.serve\([\s\S]*$/,''),context);
  vm.runInContext('async function requireCurrentEval(id){return {id}};async function audit(){};async function encryptFile(bytes){return bytes}',context);
  const ctx={secretariaAllowed:true,user:{id:'synthetic-actor'},admin:{papel:'secretario_geral'}};
