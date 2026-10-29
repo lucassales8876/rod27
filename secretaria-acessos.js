@@ -22,7 +22,7 @@ window.saveAccessControl=async function(){
 window.openMyProfile=async function(){
  try{
   var d=await api('my_profile');
-  box.innerHTML='<h2>Meu perfil</h2><div class="field"><label>E-mail principal</label><div>'+e(d.primary_email)+'</div></div>'+
+  box.innerHTML='<h2>Meu perfil</h2><button class="btn ghost" onclick="rod27RequirePasswordChange(true)">Alterar minha senha</button><div class="field"><label>E-mail principal</label><div>'+e(d.primary_email)+'</div></div>'+
    '<h3>E-mails secundários de recuperação</h3>'+d.secondary_emails.map(function(x){return '<div class="answer"><b>'+e(x.email)+'</b><p>'+(x.verified_at?'Titularidade confirmada':'Pendente de comprovação de titularidade; não recebe recuperação')+'</p><button class="btn ghost small" onclick="removeRecoveryEmail(&quot;'+e(x.email)+'&quot;)">Remover</button></div>'}).join('')+
    '<div class="warning">'+e(d.delivery_status)+'</div><div class="field"><label>Novo e-mail secundário</label><input id="recovery_email" type="email" maxlength="254" autocomplete="email"></div>'+
    '<div class="actions"><button class="btn primary" onclick="saveRecoveryEmail()">Cadastrar como pendente</button><button class="btn ghost" onclick="closeM()">Fechar</button></div>';

@@ -39,4 +39,12 @@ for(const [source,role] of [[admin,'secretario_geral'],[control,'superadmin1']])
  const r=await ctx.handle(request({action:'change_required_password',password:randomUUID()+'aA!'}));
  check(r.status===400,'revoke failure reported');check(state.user.app_metadata.rod27_password_change_required===true,'revoke failure retains administrative lock');
 }
+{
+ const {state,ctx}=setup(admin,'secretario_geral');state.user.app_metadata.rod27_password_change_required=false;
+ const r=await ctx.handle(request({action:'change_own_password',user_id:'another-account',password:randomUUID()+'aA!'}));
+ check(r.status===200,'optional own password change works without mandatory flag');
+ check(state.active===false,'optional change revokes sessions');
+ check(state.user.app_metadata.rod27_password_change_required===false,'optional change does not require future change');
+ check(state.updates.length===1&&state.audit===1,'only authenticated account updated and audited');
+}
 console.log(JSON.stringify({required_password_checks:checks,real_credentials_used:0}));
