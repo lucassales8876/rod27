@@ -36,17 +36,18 @@ window.recoverLogin=async function(){
 };
 window.doLogin=async function(){var er=document.getElementById("er");er.textContent="Entrando…";try{var x=await fetch(U+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("em").value.trim(),password:document.getElementById("pw").value})}),j=await x.json();if(!x.ok)throw new Error("E-mail ou senha inválidos.");ss(j);await boot()}catch(z){er.textContent=z.message}}
 window.logout=function(){AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
-function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],["admins","Contas e PINs"],["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
+function isTopAdmin(){return S.data?.admin?.papel==="superadmin1"}
+function tabs(){return'<div class="tabs">'+[["overview","Visão geral"],["questions","Formulário"],["settings","Configurações"],...(isTopAdmin()?[["admins","Contas e PINs"]]:[]),["audit","Auditoria"]].map(function(t){return'<button class="tab '+(S.tab===t[0]?"on":"")+'" onclick="setTab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>'}).join("")+'</div>'}
 var AUD_TAPS=0;
-window.setTab=function(t){
+window.setTab=function(t){if(t==="admins"&&!isTopAdmin()){S.tab="overview";render();return;}
  if(t==="audit"){AUD_TAPS=S.tab==="audit"?AUD_TAPS+1:1;S.tab=t;if(AUD_TAPS>=3){AUD_TAPS=0;S.auditOpen=true;}}
  else{AUD_TAPS=0;S.auditOpen=false;S.tab=t;}
  render();
- if(t==="admins")loadCoordinatorAccess();
+ if(t==="admins"&&isTopAdmin())loadCoordinatorAccess();
  if(t==="overview")refreshHealth(false);
 };
-function render(){var d=S.data;app.innerHTML='<section class="hero"><div class="top"><div><div class="ey">ROD27 · CENTRAL DE CONTROLE</div><h1>Controle do sistema</h1><p>'+e(d.admin.nome_exibicao||d.admin.email)+' · superadmin</p></div><div class="actions"><button class="btn ghost small" onclick="window.open(&quot;/secretaria&quot;,&quot;_blank&quot;)">Abrir painel do Rodízio</button><button class="btn ghost small" onclick="logout()">Sair</button></div></div></section><main>'+tabs()+'<div id="view">'+view()+'</div></main>'}
-function view(){var d=S.data;if(S.tab==="overview")return overview(d);if(S.tab==="questions")return questions(d);if(S.tab==="settings")return settings(d);if(S.tab==="admins")return admins(d);return audit(d)}
+function render(){var d=S.data;app.innerHTML='<section class="hero"><div class="top"><div><div class="ey">ROD27 · CENTRAL DE CONTROLE</div><h1>Controle do sistema</h1><p>'+e(d.admin.nome_exibicao||d.admin.email)+' · '+e(d.admin.papel)+'</p></div><div class="actions">'+(isTopAdmin()?'<button class="btn ghost small" onclick="window.open(&quot;/secretaria&quot;,&quot;_blank&quot;)">Abrir painel do Rodízio</button>':'')+'<button class="btn ghost small" onclick="logout()">Sair</button></div></div></section><main>'+tabs()+'<div id="view">'+view()+'</div></main>'}
+function view(){var d=S.data;if(S.tab==="overview")return overview(d);if(S.tab==="questions")return questions(d);if(S.tab==="settings")return settings(d);if(S.tab==="admins")return isTopAdmin()?admins(d):overview(d);return audit(d)}
 function healthPanel(){
  var x=S.ops,h='<div class="card" style="margin-bottom:12px"><div class="top"><div><h3>Saúde do sistema</h3><p class="muted">Consultas reais a páginas, serviços e banco. Uma resposta HTTP não garante que todo o formulário esteja sem defeitos.</p></div><button type="button" class="btn ghost small" onclick="refreshHealth(true)">Atualizar verificações</button></div>';
  if(!x)return h+'<p class="muted">'+(S.opsBusy?"Verificando os serviços…":"Sem verificação recente.")+'</p></div>';

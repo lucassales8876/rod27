@@ -12,8 +12,8 @@ function fail(message:string,status=400){return json({ok:false,error:message},st
 function b64url(bytes:Uint8Array){let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"")}
 async function hashPin(pin:string){const salt=crypto.getRandomValues(new Uint8Array(16)),iter=210000,key=await crypto.subtle.importKey("raw",new TextEncoder().encode(pin),"PBKDF2",false,["deriveBits"]),bits=await crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt,iterations:iter},key,256);return "pbkdf2-sha256$"+iter+"$"+b64url(salt)+"$"+b64url(new Uint8Array(bits))}
 function genPin(){const limit=Math.floor(4294967296/1000000)*1000000;let x=0;do{x=crypto.getRandomValues(new Uint32Array(1))[0]}while(x>=limit);return String(x%1000000).padStart(6,"0")}
-async function resolveAdmin(req:Request){const h=req.headers.get("authorization")??"";if(!h.startsWith("Bearer "))return null;const{data,error}=await db.auth.getUser(h.slice(7).trim());if(error||!data.user)return null;const{data:a}=await db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo").eq("user_id",data.user.id).eq("ativo",true).maybeSingle();return a?{user:data.user,admin:a}:null}
-function canOperate(ctx:any){return ctx.admin.papel==="superadmin"||ctx.admin.papel==="secretario_geral"}
+async function resolveAdmin(req:Request){const h=req.headers.get("authorization")??"";if(!h.startsWith("Bearer "))return null;const{data,error}=await db.auth.getUser(h.slice(7).trim());if(error||!data.user)return null;const{data:a}=await db.from("usuarios_admin").select("user_id,papel,nome_exibicao,ativo").eq("user_id",data.user.id).eq("ativo",true).maybeSingle();return a&&a.papel!=="superadmin"?{user:data.user,admin:a}:null}
+function canOperate(ctx:any){return ctx.admin.papel==="superadmin1"||ctx.admin.papel==="secretario_geral"}
 async function audit(ctx:any,acao:string,entidade:string,id:string,detalhes:any={}){await db.from("auditoria_sistema").insert({user_id:ctx.user.id,papel:ctx.admin.papel,acao,entidade,entidade_id:id,detalhes})}
 async function cycle(){const{data,error}=await db.from("ciclos_rodizio").select("id,ano,ano_base,nome,status").eq("ano",2027).single();if(error)throw error;return data}
 async function sectorContext(n:number){const c=await cycle();const{data:s}=await db.from("setores").select("id,numero,area").eq("numero",n).single();const{data:coord}=await db.from("coordenacoes_setor").select("id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id).eq("setor_id",s.id).single();const{data:cred}=await db.from("coordenador_credenciais").select("id,rol_login,status,ultimo_login_em,bloqueado_ate").eq("coordenacao_id",coord.id).single();return{c,s,coord,cred}}
@@ -342,6 +342,45 @@ async function blankForm(ctx:any,b:any){
  return{ok:true,form:{status:form?.status??"rascunho",versao:form?.versao??1,title:form?.titulo_aviso??"",notice:form?.texto_aviso??""},sector:sectorInfo,questions};
 }
 
+async function blankBatch(ctx:any,b:any){
+ if(!canOperate(ctx))throw new Error("Acesso restrito à Secretaria.");
+ const tipo=String(b.tipo??"");
+ if(!["manifestacao","avaliacao"].includes(tipo))throw new Error("Tipo de formulário inválido.");
+ const raw=Array.isArray(b.setores)?b.setores:[];
+ const selected=[...new Set(raw.map(Number))];
+ if(!selected.length||selected.length>42||selected.some(n=>!Number.isInteger(n)||n<1||n>42))throw new Error("Selecione de 1 a 42 setores válidos.");
+ const c=await cycle();
+ const [{data:secs,error:se},{data:coords,error:ce},{data:questions,error:qe},{data:settings,error:fe}]=await Promise.all([
+  db.from("setores").select("id,numero,area").in("numero",selected),
+  db.from("coordenacoes_setor").select("id,setor_id,obreiro_rol,coordenador_nome_snapshot").eq("ciclo_id",c.id),
+  tipo==="avaliacao"?db.from("perguntas_avaliacao").select("id,ordem,titulo,enunciado,tipo_resposta,opcoes,obrigatoria").eq("ciclo_id",c.id).eq("ativa",true).eq("status","publicada").order("ordem"):Promise.resolve({data:[],error:null}),
+  tipo==="avaliacao"?db.from("configuracoes_avaliacao").select("status,versao").eq("ciclo_id",c.id).order("versao",{ascending:false}).limit(1).maybeSingle():Promise.resolve({data:null,error:null})
+ ]);
+ if(se||ce||qe||fe)throw se??ce??qe??fe;
+ const cmap=new Map((coords??[]).map((x:any)=>[x.setor_id,x]));
+ const selectedSecs=(secs??[]).sort((x:any,y:any)=>x.numero-y.numero);
+ if(selectedSecs.length!==selected.length)throw new Error("Um ou mais setores não foram encontrados.");
+ const ids=selectedSecs.map((s:any)=>cmap.get(s.id)?.id).filter(Boolean);
+ if(ids.length!==selected.length)throw new Error("Há setor sem coordenação vigente.");
+ let rows:any[]=[];
+ if(tipo==="avaliacao"){
+  const{data,error}=await db.from("avaliacoes_dirigente")
+   .select("id,coordenacao_id,dirigente_nome_snapshot,dirigente_rol,congregacao_nome_snapshot")
+   .eq("ciclo_id",c.id).eq("eh_proprio_coordenador",false).in("coordenacao_id",ids)
+   .order("congregacao_nome_snapshot").limit(1000);
+  if(error)throw error;
+  rows=data??[];
+  if(!questions?.length)throw new Error("O formulário de avaliação não tem perguntas publicadas.");
+ }
+ const groups=selectedSecs.map((sector:any)=>{
+  const coord=cmap.get(sector.id);
+  return{setor:sector.numero,area:sector.area,coordenador:coord.coordenador_nome_snapshot,
+   rol:coord.obreiro_rol,avaliacoes:rows.filter((x:any)=>x.coordenacao_id===coord.id).map((x:any)=>({
+    id:x.id,dirigente:x.dirigente_nome_snapshot,rol:x.dirigente_rol,congregacao:x.congregacao_nome_snapshot
+   }))};
+ });
+ return{ok:true,tipo,ano:2027,versao:settings?.versao??1,setores:groups,perguntas:questions??[]};
+}
 async function officeLookup(ctx:any,b:any){
  if(!canOperate(ctx))throw new Error("Sem autorização para editar.");
  const rol=String(b.rol??"").trim();
@@ -412,9 +451,14 @@ async function officeUploadDocument(ctx:any,b:any){
  if(!((mime==="application/pdf"&&isPdf)||(mime==="image/jpeg"&&isJpeg)||(mime==="image/png"&&isPng)))throw new Error("Tipo real do arquivo não corresponde à extensão.");
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(v=>v.toString(16).padStart(2,"0")).join("");
  const ext=mime==="application/pdf"?"pdf":mime==="image/jpeg"?"jpg":"png";
+ const {data:existing,error:existingError}=await db.from("documentos_avaliacao")
+  .select("id").eq("avaliacao_id",evalId).eq("sha256",hash)
+  .order("enviado_em",{ascending:false}).limit(1).maybeSingle();
+ if(existingError)throw new Error("Falha ao verificar anexos existentes.");
+ if(existing)return{ok:true,documento_id:existing.id,sha256:hash,duplicado:true};
  const path="aval/"+evalId+"/"+crypto.randomUUID()+".r27";
  const protectedBytes=await encryptFile(bytes,"document:"+path);const{error:uploadError}=await db.storage.from("rod27-documentos").upload(path,protectedBytes,{contentType:"application/octet-stream",upsert:false,cacheControl:"private"});
- if(uploadError)throw uploadError;
+ if(uploadError){console.error("doc upload storage",uploadError);throw new Error("Falha ao armazenar PDF no arquivo privado.");}
  const{data:doc,error:dbErr}=await db.from("documentos_avaliacao").insert({avaliacao_id:evalId,caminho_storage:path,nome_original:nome,tipo_mime:mime,tamanho_bytes:bytes.length,sha256:hash,enviado_por:ctx.user.id,status_ocr:"nao_processado"}).select("id").single();
  if(dbErr||!doc){await db.storage.from("rod27-documentos").remove([path]);throw dbErr??new Error("Falha ao cadastrar o documento.");}
  await audit(ctx,"upload_documento_assinado","documentos_avaliacao",doc.id,{avaliacao_id:evalId,sha256:hash,tamanho:bytes.length});
@@ -456,8 +500,16 @@ async function officeSaveTranscription(ctx:any,b:any){
   encrypted.push({pergunta_id:q.id,resposta:value?await encryptText(value,"answer:"+ev.id+":"+q.id):""});
  }
  const{data,error}=await db.rpc("rod27_salvar_transcricao",{p_avaliacao:ev.id,p_admin:ctx.user.id,p_respostas:encrypted,p_documento:doc,p_finalizar:b.finalizar===true});
- if(error)throw error;
+ if(error){
+  console.error("rod27 transcription failed",error.code,error.message);
+  const msg=String(error.message||"");
+  if(msg.includes("perguntas obrigatórias")||msg.includes("Responda todas"))throw new Error("Preencha todas as perguntas obrigatórias antes de concluir.");
+  if(msg.includes("Aguarde a publicação"))throw new Error("O formulário ainda não está publicado.");
+  if(msg.includes("Ficha já foi iniciada")||msg.includes("ficha já foi iniciada"))throw new Error("Esta ficha já foi iniciada por outra origem. Não é possível transcrevê-la automaticamente.");
+  if(msg.includes("não corresponde à ficha"))throw new Error("O PDF selecionado não pertence a esta avaliação.");
+  throw new Error("Não foi possível salvar a transcrição. Verifique o formulário e tente novamente.");
+ }
  return{ok:true,resultado:data?.[0]};
 }
-async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"planning_snapshot":return json(await planningSnapshot(ctx));case"planning_move":return json(await planningMove(ctx,b));case"planning_undo":return json(await planningUndo(ctx,b));case"planning_find":return json(await planningFind(ctx,b));case"coordinator_profile":return json(await coordinatorProfile(ctx,b));case"coordinator_document_upload":return json(await coordinatorUpload(ctx,b));case"coordinator_document_url":return json(await coordinatorDocumentUrl(ctx,b));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{if(!canOperate(ctx))throw new Error("Leitura das respostas restrita à Secretaria e superadministrador.");const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
+async function handle(req:Request){const ctx=await resolveAdmin(req);if(!ctx)return fail("Sessão inválida ou conta não autorizada.",401);let b:any;try{b=await req.json()}catch{return fail("Requisição inválida.",400)};try{switch(String(b.action??"")){case"bootstrap":return json(await bootstrap(ctx));case"map_2026":return json(await map2026(ctx));case"planning_snapshot":return json(await planningSnapshot(ctx));case"planning_move":return json(await planningMove(ctx,b));case"planning_undo":return json(await planningUndo(ctx,b));case"planning_find":return json(await planningFind(ctx,b));case"coordinator_profile":return json(await coordinatorProfile(ctx,b));case"coordinator_document_upload":return json(await coordinatorUpload(ctx,b));case"coordinator_document_url":return json(await coordinatorDocumentUrl(ctx,b));case"manifestations":return json(await manifestations(ctx));case"export_detailed":return json(await exportDetailed(ctx,b));case"blank_form":return json(await blankForm(ctx,b));case"blank_batch":return json(await blankBatch(ctx,b));case"office_lookup_obreiro":return json(await officeLookup(ctx,b));case"office_replace_dirigente":return json(await officeReplacePastor(ctx,b));case"office_change_coordinator":return json(await officeChangeCoordinator(ctx,b));case"office_documents":return json(await officeDocuments(ctx,b));case"office_document_url":return json(await officeDocumentUrl(ctx,b));case"office_upload_document":return json(await officeUploadDocument(ctx,b));case"office_transcription":return json(await officeTranscription(ctx,b));case"office_save_transcription":return json(await officeSaveTranscription(ctx,b));case"sector":return json(await sector(Number(b.setor)));case"evaluation":{if(!canOperate(ctx))throw new Error("Leitura das respostas restrita à Secretaria e superadministrador.");const d=await evaluation(String(b.avaliacao_id??""));return d?json(d):fail("Avaliação não encontrada.",404)}case"reset_coordinator_pin":return json(await resetPin(ctx,Number(b.setor)));case"revoke_coordinator":return json(await revoke(ctx,Number(b.setor)));case"save_classification":return json(await saveClass(ctx,b));default:return fail("Ação desconhecida.",400)}}catch(e){console.error(e);return fail(e instanceof Error?e.message:"Falha administrativa.",500)}}
 Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});if(req.method==="GET")return new Response(PAGE_HTML,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store","X-Frame-Options":"DENY","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"}});if(req.method==="POST")return handle(req);return new Response("Method not allowed",{status:405,headers:cors})});
