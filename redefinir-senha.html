@@ -16,17 +16,22 @@ input{width:100%;border:1px solid #d6d0c6;border-radius:11px;padding:12px;font:i
 const SUPABASE="https://zrjxxcytgtjuuinhkfux.supabase.co";
 const KEY="sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh";
 const hash=new URLSearchParams(location.hash.slice(1));
-const token=hash.get("access_token");
+let token=hash.get("access_token");
+const tokenHash=hash.get("token_hash");
 const typ=hash.get("type");
 history.replaceState(null,"",location.pathname);
 function toggle(){const a=document.getElementById("pw"),b=document.getElementById("pw2");const show=a.type==="password";a.type=b.type=show?"text":"password";document.querySelector(".show").textContent=show?"Ocultar senha":"Mostrar senha";}
 async function save(){
  const m=document.getElementById("msg"),a=document.getElementById("pw"),b=document.getElementById("pw2");
- if(!token||typ!=="recovery"){m.textContent="Link inválido ou expirado.";return}
+ if((!token&&!tokenHash)||typ!=="recovery"){m.textContent="Link inválido ou expirado.";return}
  if(a.value!==b.value){m.textContent="As senhas não coincidem.";return}
  if(a.value.length<12){m.textContent="Use pelo menos 12 caracteres.";return}
  document.getElementById("save").disabled=true;m.textContent="Validando...";
  try{
+  if(!token&&tokenHash){
+   const v=await fetch(SUPABASE+"/auth/v1/verify",{method:"POST",headers:{apikey:KEY,"Content-Type":"application/json"},body:JSON.stringify({token_hash:tokenHash,type:"recovery"})});
+   const verified=await v.json();if(!v.ok||!verified.access_token)throw Error("Link inválido, expirado ou já utilizado.");token=verified.access_token;
+  }
   const r=await fetch(SUPABASE+"/auth/v1/user",{method:"PUT",headers:{"apikey":KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({password:a.value})});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw Error(j.msg||j.message||"Não foi possível concluir.");

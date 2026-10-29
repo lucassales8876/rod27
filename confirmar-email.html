@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer"><title>Confirmar endereço · Rod27</title>
+<style>body{margin:0;background:#f5f2ec;color:#17223b;font:16px/1.5 system-ui,sans-serif}.card{max-width:430px;margin:12vh auto;padding:28px;background:#fff;border:1px solid #e4ded3;border-radius:23px}button{background:#17223b;color:white;border:0;border-radius:11px;padding:12px 18px;font:inherit;font-weight:700;cursor:pointer}a{color:#273a62}#message{margin:16px 0}</style></head>
+<body><main class="card"><h1>Confirmar endereço</h1><p>Confirme que este e-mail pode ser usado para recuperar seu acesso ao Rod27. Sua senha e seu e-mail principal permanecem iguais.</p><button id="confirm" type="button">Confirmar meu e-mail</button><p id="message" aria-live="polite"></p><a href="/secretaria">Voltar à Secretaria</a></main>
+<script>
+const token=new URLSearchParams(location.hash.slice(1)).get('token');history.replaceState(null,'',location.pathname);
+const button=document.getElementById('confirm'),message=document.getElementById('message');
+if(!token||!/^[-_a-zA-Z0-9]{43}$/.test(token)){button.disabled=true;message.textContent='Link inválido. Solicite outra confirmação em Meu perfil.'}
+button.onclick=async()=>{button.disabled=true;message.textContent='Confirmando…';try{
+const r=await fetch('https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'confirm_secondary',token})});
+const d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'Não foi possível confirmar.');message.textContent='Endereço confirmado. Ele está habilitado para receber recuperação quando você solicitar.';
+}catch(e){message.textContent=e.message;button.disabled=false}};
+</script></body></html>

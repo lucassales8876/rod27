@@ -32,8 +32,16 @@ function login(msg){app.innerHTML='<div class="login"><h2>Acesso</h2><div class=
 window.recoverLogin=async function(){
  var email=document.getElementById("em")?.value.trim();
  if(!email){toast("Informe o e-mail.");return}
- try{await fetch(U+"/auth/v1/recover?redirect_to="+encodeURIComponent("https://rod27-ieadern.pages.dev/redefinir-senha"),{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:email})})}catch(_){}
- toast("Se existir uma conta, as instruções de recuperação serão enviadas.");
+ try{
+  var r=await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/functions/v1/rod27-recovery",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"request",email:email})});
+  var d=await r.json();
+  if(r.status===503&&d.delivery_unavailable){
+   await fetch("https://zrjxxcytgtjuuinhkfux.supabase.co/auth/v1/recover?redirect_to="+encodeURIComponent("https://rod27-ieadern.pages.dev/redefinir-senha"),{method:"POST",headers:{apikey:"sb_publishable_p6zUbFwkzvfv_7XUMqhxwA_BjGCxIEh","Content-Type":"application/json"},body:JSON.stringify({email:email})});
+   toast("Se for seu e-mail principal, as instruções serão enviadas. O secundário ainda aguarda ativação.");return;
+  }
+  if(!r.ok)throw Error(d.error||"Não foi possível solicitar a recuperação.");
+  toast("Se este endereço estiver habilitado, as instruções serão enviadas.");
+ }catch(e){toast(e.message||"Não foi possível solicitar a recuperação.")}
 };
 window.doLogin=async function(){var er=document.getElementById("er");er.textContent="Entrando…";try{var x=await fetch(U+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":K,"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("em").value.trim(),password:document.getElementById("pw").value})}),j=await x.json();if(!x.ok)throw new Error("E-mail ou senha inválidos.");ss(j);await boot()}catch(z){er.textContent=z.message}}
 window.logout=function(){closeM();S.coordData=null;AUDIT_AUTH.grant=null;clr();login()};function closeM(){back.classList.remove("show");box.innerHTML="";delete window._latestPinInfo}window.closeM=closeM;back.addEventListener("click",function(x){if(x.target===back)closeM()});
