@@ -12,7 +12,7 @@ const roles=await call('/rest/v1/usuarios_admin?papel=eq.secretario_geral&ativo=
 assert.equal(roles.status,200);assert.equal(roles.data.length,1,'must identify exactly one secretary');
 const id=roles.data[0].user_id;const before=await call('/auth/v1/admin/users/'+id);assert.equal(before.status,200);
 const reset=await call('/auth/v1/admin/users/'+id,'PUT',{password,app_metadata:{...before.data.app_metadata,rod27_password_change_required:true}});
-assert.equal(reset.status,200,'authorized reset');assert.equal(reset.data.email,before.data.email,'primary email preserved');
+assert.equal(reset.status,200,'authorized reset');assert.ok(reset.data.email===before.data.email,'primary email preserved');
 assert.equal(reset.data.app_metadata.rod27_password_change_required,true,'mandatory change set');
 const login=await call('/auth/v1/token?grant_type=password','POST',{email:before.data.email,password});assert.equal(login.status,200,'temporary password works');
 const token=login.data.access_token;
