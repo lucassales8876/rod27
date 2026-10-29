@@ -17,6 +17,7 @@ async function handle(req:Request){
   const bytes=new Uint8Array(total);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.length}
   b=JSON.parse(new TextDecoder().decode(bytes));
  }catch{return json({ok:false,error:'Requisição inválida.'},400)}
+ if(!b||typeof b!=='object'||Array.isArray(b))return json({ok:false,error:'Requisição inválida.'},400);
  if(b.action==='confirm_secondary'){
   if(typeof b.token!=='string'||!/^[-_a-zA-Z0-9]{43}$/.test(b.token))return json({ok:false,error:'Link inválido ou expirado.'},400);
   const {data,error}=await db.rpc('rod27_confirm_recovery_email',{p_hash:await digestRecovery(b.token)});
